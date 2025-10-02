@@ -11,9 +11,8 @@ import uuid
 import zipfile
 from upload import upload_file
 from ezdxf import bbox, colors
-import subprocess
 import math
-from typing import List, Tuple, Dict, Optional, Union
+from typing import List, Tuple
 
 
 

@@ -13,8 +13,8 @@ class CadastralPlan(PlanProps):
         if self.type != PlanType.CADASTRAL:
             raise ValueError("CadastralPlan must have type PlanType.CADASTRAL")
 
-        self._frame_x_percent = 0.35
-        self._frame_y_percent = 0.8
+        self._frame_x_percent = 0.55
+        self._frame_y_percent = 1.0
         self._bounding_box = self.get_bounding_box()
         self._frame_coords = self._setup_frame_coords()
         self._coord_dict = {coord.id: coord for coord in self.coordinates}
@@ -138,9 +138,9 @@ class CadastralPlan(PlanProps):
         frame_right, frame_top = max_x + margin_x, max_y + margin_y
         self._drawer.draw_frame(frame_left, frame_bottom, frame_right, frame_top)
 
-        offset_x, offset_y = max(width, height) * (self._frame_x_percent + 0.03), max(height, width) * (self._frame_y_percent + 0.03)
-        self._drawer.draw_frame(min_x - offset_x, min_y - offset_y,
-                          max_x + offset_x, max_y + offset_y)
+        # offset_x, offset_y = max(width, height) * (self._frame_x_percent + 0.03), max(height, width) * (self._frame_y_percent + 0.03)
+        # self._drawer.draw_frame(min_x - offset_x, min_y - offset_y,
+        #                   max_x + offset_x, max_y + offset_y)
 
     def draw_title_block(self):
         """Add title block to the frame."""
