@@ -13,8 +13,8 @@ class CadastralPlan(PlanProps):
         if self.type != PlanType.CADASTRAL:
             raise ValueError("CadastralPlan must have type PlanType.CADASTRAL")
 
-        self._frame_x_percent = 0.55
-        self._frame_y_percent = 1.0
+        self._frame_x_percent = 0.9
+        self._frame_y_percent = 1.5
         self._bounding_box = self.get_bounding_box()
         self._frame_coords = self._setup_frame_coords()
         self._coord_dict = {coord.id: coord for coord in self.coordinates}
