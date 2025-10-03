@@ -24,6 +24,7 @@ class CadastralPlan(PlanProps):
 
     def _setup_drawer(self) -> SurveyDXFManager:
         drawer = SurveyDXFManager(plan_name=self.name, scale=self.get_drawing_scale())
+        drawer.setup_cadastral_layers()
         drawer.setup_font(self.font)
         drawer.setup_beacon_style(self.beacon_type, self.beacon_size)
         return drawer
@@ -114,19 +115,19 @@ class CadastralPlan(PlanProps):
             text_angle += 180
 
         # Add labels
-        self._drawer.add_text(f"{leg.distance:.2f} m", mid_x, mid_y,
-                        angle=text_angle, height=self.label_size)
+        self._drawer.add_label(f"{leg.distance:.2f} m", mid_x, mid_y,
+                               angle=text_angle, height=self.label_size)
         ld = line_direction(angle_deg)
         if ld == "left → right":
-            self._drawer.add_text(f"{leg.bearing.degrees}°", first_x, first_y,
-                            angle=text_angle, height=self.label_size)
-            self._drawer.add_text(f"{leg.bearing.minutes}'", last_x, last_y,
-                            angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.degrees}°", first_x, first_y,
+                                   angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.minutes}'", last_x, last_y,
+                                   angle=text_angle, height=self.label_size)
         else:
-            self._drawer.add_text(f"{leg.bearing.degrees}°", last_x, last_y,
-                            angle=text_angle, height=self.label_size)
-            self._drawer.add_text(f"{leg.bearing.minutes}'", first_x, first_y,
-                            angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.degrees}°", last_x, last_y,
+                                   angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.minutes}'", first_x, first_y,
+                                   angle=text_angle, height=self.label_size)
 
     def draw_frames(self):
         """Draw outer and offset frames."""

@@ -27,6 +27,7 @@ pyparsing==3.2.4
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 scipy==1.16.2
+shapely==2.1.2
 six==1.17.0
 soupsieve==2.8
 typing-inspection==0.4.1

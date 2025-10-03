@@ -17,12 +17,12 @@ from typing import List, Tuple
 
 
 class SurveyDXFManager:
-    def __init__(self, plan_name: str = "Survey Plan", scale: float = 1.0):
+    def __init__(self, plan_name: str = "Survey Plan", scale: float = 1.0, dxf_version="R2010"):
         self.plan_name = plan_name
         self.scale = scale
-        self.doc = ezdxf.new(dxfversion="R2010")
+        self.doc = ezdxf.new(dxfversion=dxf_version)
         self.msp = self.doc.modelspace()
-        self._setup_layers()
+        self.setup_layers()
 
 
         # set units
@@ -33,16 +33,20 @@ class SurveyDXFManager:
         self.doc.header["$AUPREC"] = 3 # 0d00'00"
         self.doc.header["$ANGBASE"] = 90.0  # set 0° direction to North
 
-    def _setup_layers(self):
-        """Setup standard survey layers"""
+    def setup_layers(self):
         self.doc.layers.add(name="BEACONS", color=colors.BLACK)
-        self.doc.layers.add(name="PARCELS", color=colors.RED)
         self.doc.layers.add(name="LABELS", color=colors.BLACK)
         self.doc.layers.add(name="FRAME", color=colors.BLACK)
         self.doc.layers.add(name="TITLE_BLOCK", color=colors.BLACK)
         self.doc.layers.add(name="FOOTER", color=colors.BLACK)
+
+    def setup_cadastral_layers(self):
+        self.doc.layers.add(name="PARCELS", color=colors.RED)
+
+    def setup_topographic_layers(self):
         self.doc.layers.add(name="BOUNDARY", color=colors.RED)
-        self.doc.layers.add('CONTOUR_MAJOR', true_color=ezdxf.colors.rgb2int((127, 31, 0)), linetype="Continuous", lineweight=35)
+        self.doc.layers.add('CONTOUR_MAJOR', true_color=ezdxf.colors.rgb2int((127, 31, 0)), linetype="Continuous",
+                            lineweight=35)
         self.doc.layers.add('CONTOUR_MINOR', true_color=ezdxf.colors.rgb2int((127, 31, 0)), linetype="Continuous",
                             lineweight=18)
         self.doc.layers.add('CONTOUR_LABELS', true_color=ezdxf.colors.rgb2int((127, 31, 0)))
@@ -52,6 +56,21 @@ class SurveyDXFManager:
                             lineweight=9)
         self.doc.layers.add('SPOT_HEIGHTS', true_color=ezdxf.colors.rgb2int((205, 105, 40)), linetype="Continuous",
                             lineweight=25)
+
+    def setup_layout_layers(self):
+        self.doc.layers.add(name="BOUNDARY", color=colors.RED, linetype="CONTINUOUS", lineweight=50)
+        self.doc.layers.add(name="PARCELS", color=colors.GREEN, linetype="CONTINUOUS", lineweight=25)
+        self.doc.layers.add(name="ROADS", color=colors.BLACK, linetype="CONTINUOUS", lineweight=35)
+        self.doc.layers.add(name="ROADS_CL", color=colors.CYAN, linetype="DASHDOT", lineweight=18)
+        self.doc.layers.add(name="SETBACKS", color=colors.MAGENTA, linetype="DASHED", lineweight=18)
+        self.doc.layers.add(name="DIMENSIONS", color=colors.YELLOW, linetype="CONTINUOUS", lineweight=18)
+        self.doc.layers.add(name="TEXT", color=colors.BLACK, linetype="CONTINUOUS", lineweight=18)
+        self.doc.layers.add(name="GREEN_SPACE", color=colors.GREEN, linetype="CONTINUOUS", lineweight=25)
+        self.doc.layers.add(name="UTILITIES", color=colors.BLUE, linetype="DASHED", lineweight=18)
+        self.doc.layers.add(name="EASEMENTS", true_color=ezdxf.colors.rgb2int((255, 165, 0)), linetype="DASHDOT",
+                            lineweight=18)
+        self.doc.layers.add(name="BUILDABLE", color=colors.GRAY, linetype="DASHDOT", lineweight=18)
+
 
     def setup_beacon_style(self, type_: str = "box", size: float = 1.0):
         size = size * self.scale
@@ -156,7 +175,7 @@ class SurveyDXFManager:
         #     )
 
     def add_boundary(self, points: List[Tuple[float, float]]):
-        """Add a boundaty given its ID and list of (x, y) points"""
+        """Add a boundary given its ID and list of (x, y) points"""
         # scale points
         points = [(x * self.scale, y * self.scale) for x, y, *rest in points]
 
@@ -164,7 +183,46 @@ class SurveyDXFManager:
             'layer': 'BOUNDARY'
         })
 
-    def add_text(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0):
+    def add_buildable(self, points: List[Tuple[float, float]]):
+        """Add a boundary given its ID and list of (x, y) points"""
+        # scale points
+        points = [(x * self.scale, y * self.scale) for x, y, *rest in points]
+
+        self.msp.add_lwpolyline(points, close=True, dxfattribs={
+            'layer': 'BUILDABLE'
+        })
+
+    def add_road_cl(self, points: List[Tuple[float, float]]):
+        # scale points
+        points = [(x * self.scale, y * self.scale) for x, y, *rest in points]
+
+        self.msp.add_lwpolyline(points, dxfattribs={
+            'layer': 'ROAD_CL'
+        })
+
+    def add_road(self, points: List[Tuple[float, float]]):
+        # scale points
+        points = [(x * self.scale, y * self.scale) for x, y, *rest in points]
+
+        self.msp.add_lwpolyline(points, dxfattribs={
+            'layer': 'ROADS'
+        })
+
+    def add_greenspace(self, points: List[Tuple[float, float]], coords):
+        """Add a boundary given its ID and list of (x, y) points"""
+        # scale points
+        points = [(x * self.scale, y * self.scale) for x, y, *rest in points]
+
+        self.msp.add_lwpolyline(points, close=True, dxfattribs={
+            'layer': 'GREEN_SPACE'
+        })
+
+        hatch = self.msp.add_hatch(dxfattribs={'layer': 'GREEN_SPACE'})
+        hatch.set_pattern_fill('ANSI31', scale=0.5)
+        hatch.paths.add_polyline_path(coords, is_closed=True)
+
+
+    def add_label(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0):
         x = x * self.scale
         y = y * self.scale
         height = height * self.scale
@@ -181,6 +239,23 @@ class SurveyDXFManager:
         ).set_placement(
             (x , y),
             align=TextEntityAlignment.MIDDLE_CENTER
+        )
+
+    def add_text(self, text: str, x: float, y: float, height: float = 1.0):
+        x = x * self.scale
+        y = y * self.scale
+        height = height * self.scale
+
+        """Add arbitrary text at given coordinates with optional rotation"""
+        text = self.msp.add_text(
+            text,
+            dxfattribs={
+                'layer': 'TEXT',
+                'height': height,
+                'style': 'STANDARD'
+            }
+        ).set_placement(
+            (x , y),
         )
 
     def draw_north_arrow(self, x: float, y: float, height: float = 100.0):
@@ -250,7 +325,7 @@ class SurveyDXFManager:
                     'rotation': angle
                 }
             ).set_placement(
-                (x, y),
+                (x + 1, y + 1),
                 align=TextEntityAlignment.TOP_LEFT,
             )
 
@@ -400,7 +475,7 @@ class SurveyDXFManager:
         graphical_min_y = graphical_box.extmin.y
 
         origin_mtext = self.msp.add_mtext(
-            text=f"{MTextEditor.UNDERLINE_START}\C5;{area}{MTextEditor.NEW_LINE}\C1;{origin}{MTextEditor.UNDERLINE_STOP}",
+            text=f"{MTextEditor.UNDERLINE_START}\C1;{area}{MTextEditor.NEW_LINE}\C5;{origin}{MTextEditor.UNDERLINE_STOP}",
             dxfattribs={'style': 'SURVEY_TEXT'},
         )
         origin_mtext.dxf.attachment_point = ezdxf.enums.MTextEntityAlignment.TOP_CENTER
@@ -629,6 +704,29 @@ class SurveyDXFManager:
         if not filepath:
             filepath = f"{self.get_filename()}.dwg"
         odafc.convert(dxf_filepath, filepath)
+
+    # def save(self, paper_size: str = "A4", orientation: str = "portrait"):
+    #     # with tempfile.TemporaryDirectory() as tmpdir:
+    #     filename = self.get_filename()
+    #     dxf_path = os.path.join("", f"{filename}.dxf")
+    #     dwg_path =  os.path.join("", f"{filename}.dwg")
+    #     pdf_path =  os.path.join("", f"{filename}.pdf")
+    #     zip_path = os.path.join("", f"{filename}.zip")
+    #
+    #     self.save_dxf(dxf_path)
+    #     self.save_dwg(dxf_path, dwg_path)
+    #     self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
+    #
+    #     # Create a ZIP file containing all three formats
+    #     with zipfile.ZipFile(zip_path, "w") as zipf:
+    #         zipf.write(dxf_path, os.path.basename(dxf_path))
+    #         zipf.write(dwg_path, os.path.basename(dwg_path))
+    #         zipf.write(pdf_path, os.path.basename(pdf_path))
+    #
+    #     # url = upload_file(zip_path, folder="survey_plans", file_name=filename)
+    #     # if url is None:
+    #     #     raise Exception("Upload failed")
+    #     return "url"
 
     def save(self, paper_size: str = "A4", orientation: str = "portrait"):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,13 +1,12 @@
 import os
 from dotenv import load_dotenv
-
-from topographic import TopographicPlan
-
 load_dotenv()  # reads .env into environment
 
-from cadastral import CadastralPlan
-
 from flask import Flask, request, jsonify
+
+from topographic import TopographicPlan
+from cadastral import CadastralPlan
+from layout import LayoutPlan
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "secret"
@@ -36,6 +35,16 @@ def generate_topographic_plan():
 
     url = plan.save()
     return jsonify({"message": "Topographic plan generated", "filename": plan.name, "url": url}), 200
+
+@app.route("/layout/plan", methods=["POST"])
+def generate_layout_plan():
+    data = request.get_json()
+
+    plan = LayoutPlan(**data)
+    plan.draw()
+
+    url = plan.save()
+    return jsonify({"message": "Layout plan generated", "filename": plan.name, "url": url}), 200
 
 
 @app.errorhandler(404)

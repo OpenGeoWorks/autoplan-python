@@ -42,6 +42,7 @@ class TopographicPlan(PlanProps):
 
     def _setup_drawer(self) -> SurveyDXFManager:
         drawer = SurveyDXFManager(plan_name=self.name, scale=self.get_drawing_scale())
+        drawer.setup_topographic_layers()
         drawer.setup_font(self.font)
         drawer.setup_beacon_style(self.beacon_type, self.beacon_size)
         drawer.setup_topo_point_style(type_="cross", size=0.5 * self.topographic_setting.point_label_scale)
@@ -110,8 +111,7 @@ class TopographicPlan(PlanProps):
         if not boundary_points:
             return
 
-        (self._drawer.
-         add_boundary(boundary_points))
+        self._drawer.add_boundary(boundary_points)
         orientation = polygon_orientation(boundary_points)
 
         for leg in self.topographic_boundary.legs:
@@ -153,19 +153,19 @@ class TopographicPlan(PlanProps):
             text_angle += 180
 
         # Add labels
-        self._drawer.add_text(f"{leg.distance:.2f} m", mid_x, mid_y,
-                              angle=text_angle, height=self.label_size)
+        self._drawer.add_label(f"{leg.distance:.2f} m", mid_x, mid_y,
+                               angle=text_angle, height=self.label_size)
         ld = line_direction(angle_deg)
         if ld == "left → right":
-            self._drawer.add_text(f"{leg.bearing.degrees}°", first_x, first_y,
-                                  angle=text_angle, height=self.label_size)
-            self._drawer.add_text(f"{leg.bearing.minutes}'", last_x, last_y,
-                                  angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.degrees}°", first_x, first_y,
+                                   angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.minutes}'", last_x, last_y,
+                                   angle=text_angle, height=self.label_size)
         else:
-            self._drawer.add_text(f"{leg.bearing.degrees}°", last_x, last_y,
-                                  angle=text_angle, height=self.label_size)
-            self._drawer.add_text(f"{leg.bearing.minutes}'", first_x, first_y,
-                                  angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.degrees}°", last_x, last_y,
+                                   angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{leg.bearing.minutes}'", first_x, first_y,
+                                   angle=text_angle, height=self.label_size)
 
     def draw_frames(self):
         """Draw outer and offset frames."""

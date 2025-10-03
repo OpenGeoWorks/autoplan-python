@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 from datetime import datetime
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
@@ -80,6 +80,43 @@ class TopographicBoundaryProps(BaseModel):
     area: Optional[float] = None
     legs: Optional[List[TraverseLegProps]] = []
 
+class LayoutBoundaryProps(BaseModel):
+    coordinates: List[CoordinateProps] = []
+    area: Optional[float] = None
+    legs: Optional[List[TraverseLegProps]] = []
+
+class LayoutParameters(BaseModel):
+    """Parameters for layout generation"""
+    # Road Parameters
+    main_road_width: float = 15.0  # meters
+    secondary_road_width: float = 12.0  # meters
+    access_road_width: float = 9.0  # meters
+
+    # Parcel parameters
+    min_parcel_area: float = 450.0  # square meters
+    max_parcel_area: float = 1000.0  # square meters
+    min_parcel_width: float = 15.0  # meters
+    min_parcel_depth: float = 25.0  # meters
+    target_parcel_ratio: float = 1.5  # depth/width ratio
+
+    # Subdivision parameters
+    subdivision_type: str = "grid"  # "grid", "radial", "organic", "mixed"
+    road_hierarchy: bool = True
+    include_cul_de_sacs: bool = True
+    include_green_spaces: bool = True
+    green_space_percentage: float = 10.0  # percentage of total are
+
+    # Setbacks
+    front_setback: float = 6.0  # meters
+    side_setback: float = 3.0  # meters
+    rear_setback: float = 3.0  # meters
+
+    # Corner radius for road intersections
+    corner_radius: float = 5.0  # meters
+
+    # Block parameters
+    max_block_length: float = 200.0  # meters
+    max_block_width: float = 100.0  # meters
 
 # ---------- Main Plan Model ----------
 class PlanProps(BaseModel):
@@ -111,6 +148,8 @@ class PlanProps(BaseModel):
     page_orientation: PageOrientation = PageOrientation.PORTRAIT
     topographic_setting: Optional[TopographicSettingProps] = None
     topographic_boundary: Optional[TopographicBoundaryProps] = None
+    layout_boundary: Optional[LayoutBoundaryProps] = None
+    layout_parameters: Optional[LayoutParameters] = None
     footers: List[str] = []
     footer_size: float = 0.5
 
@@ -131,15 +170,20 @@ class PlanProps(BaseModel):
         return extent
 
     def get_bounding_box(self) -> Optional[tuple]:
-        if len(self.coordinates) == 0:
-            return None
+        xs, ys = [], []
 
-        xs = [p.easting for p in self.coordinates]
-        ys = [p.northing for p in self.coordinates]
+        if self.coordinates is not None:
+            xs = [p.easting for p in self.coordinates]
+            ys = [p.northing for p in self.coordinates]
 
         if self.type == PlanType.TOPOGRAPHIC and self.topographic_boundary is not None:
             xs += [p.easting for p in self.topographic_boundary.coordinates]
             ys += [p.northing for p in self.topographic_boundary.coordinates]
+
+        if self.type == PlanType.LAYOUT and self.layout_boundary is not None:
+            xs += [p.easting for p in self.layout_boundary.coordinates]
+            ys += [p.northing for p in self.layout_boundary.coordinates]
+
 
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
