@@ -26,7 +26,10 @@ class TopographicPlan(PlanProps):
         self._frame_y_percent = 1.5
         self._bounding_box = self.get_bounding_box()
         self._frame_coords = self._setup_frame_coords()
-        self._boundary_dict = {coord.id: coord for coord in self.topographic_boundary.coordinates}
+        if self.topographic_boundary is not None:
+            self._boundary_dict = {coord.id: coord for coord in self.topographic_boundary.coordinates}
+        else:
+            self._boundary_dict = {}
         if not self._frame_coords:
             raise ValueError("Cannot determine frame coordinates without valid coordinates.")
 
