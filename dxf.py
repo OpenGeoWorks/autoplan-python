@@ -4,10 +4,12 @@ from ezdxf.enums import TextEntityAlignment
 from ezdxf.addons.drawing import Frontend, RenderContext, pymupdf, layout, config
 from ezdxf.tools.text import MTextEditor
 from ezdxf.addons import odafc
+import tempfile
 import os
 from datetime import datetime
 import uuid
 import zipfile
+from upload import upload_file
 from ezdxf import bbox, colors
 import math
 from typing import List, Tuple
