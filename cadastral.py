@@ -6,8 +6,6 @@ from pydantic import PrivateAttr
 import math
 
 class CadastralPlan(PlanProps):
-    _drawer: SurveyDXFManager = PrivateAttr()
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if self.type != PlanType.CADASTRAL:
@@ -23,7 +21,7 @@ class CadastralPlan(PlanProps):
         self._drawer = self._setup_drawer()
 
     def _setup_drawer(self) -> SurveyDXFManager:
-        drawer = SurveyDXFManager(plan_name=self.name, scale=self.get_drawing_scale())
+        drawer = SurveyDXFManager(plan_name=self.name, scale=self.get_drawing_scale(), dxf_version=self.dxf_version)
         drawer.setup_cadastral_layers()
         drawer.setup_font(self.font)
         drawer.setup_beacon_style(self.beacon_type, self.beacon_size)

@@ -1,5 +1,8 @@
 import os
 from dotenv import load_dotenv
+
+from route import RoutePlan
+
 load_dotenv()  # reads .env into environment
 
 from flask import Flask, request, jsonify
@@ -45,6 +48,16 @@ def generate_layout_plan():
 
     url = plan.save()
     return jsonify({"message": "Layout plan generated", "filename": plan.name, "url": url}), 200
+
+@app.route("/route/plan", methods=["POST"])
+def generate_route_plan():
+    data = request.get_json()
+
+    plan = RoutePlan(**data)
+    plan.draw()
+
+    url = plan.save()
+    return jsonify({"message": "Route plan generated", "filename": plan.name, "url": url}), 200
 
 
 @app.errorhandler(404)

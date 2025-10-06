@@ -56,7 +56,7 @@ class ParcelProps(BaseModel):
     legs: List[TraverseLegProps] = []
 
 class ElevationProps(BaseModel):
-    id: str
+    id: Optional[str] = None
     elevation: float
     chainage: str
 
@@ -118,6 +118,14 @@ class LayoutParameters(BaseModel):
     max_block_length: float = 200.0  # meters
     max_block_width: float = 100.0  # meters
 
+class LongitudinalProfileParameters(BaseModel):
+    horizontal_scale: float = 1.0  # units-per-metre
+    vertical_scale: float = 1.0  # units-per-metre
+    profile_origin: List[float] = [0.0, 0.0]
+    station_interval: float = 10.0  # metres
+    elevation_interval: float = 1.0
+    starting_chainage: float = 0.0
+
 # ---------- Main Plan Model ----------
 class PlanProps(BaseModel):
     id: str
@@ -150,8 +158,10 @@ class PlanProps(BaseModel):
     topographic_boundary: Optional[TopographicBoundaryProps] = None
     layout_boundary: Optional[LayoutBoundaryProps] = None
     layout_parameters: Optional[LayoutParameters] = None
+    longitudinal_profile_parameters: Optional[LongitudinalProfileParameters] = None
     footers: List[str] = []
     footer_size: float = 0.5
+    dxf_version: str = "R2010"
 
     def get_drawing_scale(self):
         if not self.scale:
@@ -189,6 +199,25 @@ class PlanProps(BaseModel):
         min_y, max_y = min(ys), max(ys)
 
         return min_x, min_y, max_x, max_y
+
+    def get_route_plan_bounding_box(self) -> Optional[tuple]:
+        if self.type != PlanType.ROUTE or self.elevations is None or self.longitudinal_profile_parameters is None:
+            return None
+
+        # get max elevation
+        min_elev = min([e.elevation for e in self.elevations])
+        max_elev = max([e.elevation for e in self.elevations])
+        max_chainage = self.longitudinal_profile_parameters.starting_chainage + self.longitudinal_profile_parameters.station_interval * (len(self.elevations) - 1)
+        min_chainage = self.longitudinal_profile_parameters.starting_chainage
+
+        min_x = self.longitudinal_profile_parameters.profile_origin[0]
+        min_y = self.longitudinal_profile_parameters.profile_origin[1]
+        max_x = min_x + (max_chainage - min_chainage) * self.longitudinal_profile_parameters.horizontal_scale
+        max_y = min_y + (max_elev - min_elev) * self.longitudinal_profile_parameters.vertical_scale
+
+        return min_x, min_y, max_x, max_y
+
+
 
     def build_title(self) -> str:
         soup = BeautifulSoup(self.title.upper(), "html.parser")

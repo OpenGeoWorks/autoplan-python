@@ -41,7 +41,7 @@ class TopographicPlan(PlanProps):
         self._drawer = self._setup_drawer()
 
     def _setup_drawer(self) -> SurveyDXFManager:
-        drawer = SurveyDXFManager(plan_name=self.name, scale=self.get_drawing_scale())
+        drawer = SurveyDXFManager(plan_name=self.name, scale=self.get_drawing_scale(), dxf_version=self.dxf_version)
         drawer.setup_topographic_layers()
         drawer.setup_font(self.font)
         drawer.setup_beacon_style(self.beacon_type, self.beacon_size)

@@ -4,12 +4,10 @@ from ezdxf.enums import TextEntityAlignment
 from ezdxf.addons.drawing import Frontend, RenderContext, pymupdf, layout, config
 from ezdxf.tools.text import MTextEditor
 from ezdxf.addons import odafc
-import tempfile
 import os
 from datetime import datetime
 import uuid
 import zipfile
-from upload import upload_file
 from ezdxf import bbox, colors
 import math
 from typing import List, Tuple
@@ -34,16 +32,17 @@ class SurveyDXFManager:
         self.doc.header["$ANGBASE"] = 90.0  # set 0° direction to North
 
     def setup_layers(self):
-        self.doc.layers.add(name="BEACONS", color=colors.BLACK)
         self.doc.layers.add(name="LABELS", color=colors.BLACK)
         self.doc.layers.add(name="FRAME", color=colors.BLACK)
         self.doc.layers.add(name="TITLE_BLOCK", color=colors.BLACK)
         self.doc.layers.add(name="FOOTER", color=colors.BLACK)
 
     def setup_cadastral_layers(self):
+        self.doc.layers.add(name="BEACONS", color=colors.BLACK)
         self.doc.layers.add(name="PARCELS", color=colors.RED)
 
     def setup_topographic_layers(self):
+        self.doc.layers.add(name="BEACONS", color=colors.BLACK)
         self.doc.layers.add(name="BOUNDARY", color=colors.RED)
         self.doc.layers.add('CONTOUR_MAJOR', true_color=ezdxf.colors.rgb2int((127, 31, 0)), linetype="Continuous",
                             lineweight=35)
@@ -58,6 +57,7 @@ class SurveyDXFManager:
                             lineweight=25)
 
     def setup_layout_layers(self):
+        self.doc.layers.add(name="BEACONS", color=colors.BLACK)
         self.doc.layers.add(name="BOUNDARY", color=colors.RED, linetype="CONTINUOUS", lineweight=50)
         self.doc.layers.add(name="PARCELS", color=colors.GREEN, linetype="CONTINUOUS", lineweight=25)
         self.doc.layers.add(name="ROADS", color=colors.BLACK, linetype="CONTINUOUS", lineweight=35)
@@ -71,6 +71,11 @@ class SurveyDXFManager:
                             lineweight=18)
         self.doc.layers.add(name="BUILDABLE", color=colors.GRAY, linetype="DASHDOT", lineweight=18)
 
+    def setup_route_layers(self):
+        self.doc.layers.add(name="GRID", color=colors.BLACK)
+        self.doc.layers.add(name="F-GRID", color=colors.YELLOW, linetype="DASHDOT")
+        self.doc.layers.add(name="TEXT", color=colors.BLUE)
+        self.doc.layers.add(name="PROFILE", color=colors.RED)
 
     def setup_beacon_style(self, type_: str = "box", size: float = 1.0):
         size = size * self.scale
@@ -221,7 +226,6 @@ class SurveyDXFManager:
         hatch.set_pattern_fill('ANSI31', scale=0.5)
         hatch.paths.add_polyline_path(coords, is_closed=True)
 
-
     def add_label(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0):
         x = x * self.scale
         y = y * self.scale
@@ -241,21 +245,23 @@ class SurveyDXFManager:
             align=TextEntityAlignment.MIDDLE_CENTER
         )
 
-    def add_text(self, text: str, x: float, y: float, height: float = 1.0):
+    def add_text(self, text: str, x: float, y: float, height: float = 1.0, rotation: float = 0.0, alignment=TextEntityAlignment.TOP_LEFT):
         x = x * self.scale
         y = y * self.scale
         height = height * self.scale
 
         """Add arbitrary text at given coordinates with optional rotation"""
-        text = self.msp.add_text(
+        self.msp.add_text(
             text,
             dxfattribs={
                 'layer': 'TEXT',
                 'height': height,
-                'style': 'STANDARD'
+                'style': 'STANDARD',
+                "rotation": rotation,
             }
         ).set_placement(
             (x , y),
+             align=alignment
         )
 
     def draw_north_arrow(self, x: float, y: float, height: float = 100.0):
@@ -643,6 +649,27 @@ class SurveyDXFManager:
             degree=3,
             dxfattribs={'layer': layer}
         )
+
+    def add_grid_line(self, x1: float, y1: float, x2: float, y2: float):
+        x1 = x1 * self.scale
+        y1 = y1 * self.scale
+        x2 = x2 * self.scale
+        y2 = y2 * self.scale
+
+        self.msp.add_line((x1, y1), (x2, y2), dxfattribs={'layer': 'GRID'})
+
+    def add_f_grid_line(self, x1: float, y1: float, x2: float, y2: float):
+        x1 = x1 * self.scale
+        y1 = y1 * self.scale
+        x2 = x2 * self.scale
+        y2 = y2 * self.scale
+
+        self.msp.add_line((x1, y1), (x2, y2), dxfattribs={'layer': 'F-GRID'})
+
+    def add_profile(self, points: List[Tuple[float, float]]):
+        points = [(x * self.scale, y * self.scale) for x, y in points]
+
+        self.msp.add_spline(points, dxfattribs={'layer': 'PROFILE'})
 
     def toggle_layer(self, layer: str, state: bool):
         """Toggle the visibility of a layer"""
