@@ -323,7 +323,7 @@ class SurveyDXFManager:
             (x, y),
         )
 
-    def add_north_arrow_label(self, start: Tuple[float, float], stop: Tuple[float, float], label: str = "", height: float = 100.0):
+    def add_north_arrow_label(self, start: Tuple[float, float], stop: Tuple[float, float], label: str = "", height: float = 100.0, orientation: str = "horizontal"):
         height = height * self.scale
         x = start[0] * self.scale
         y = start[1] * self.scale
@@ -332,6 +332,12 @@ class SurveyDXFManager:
 
         # add line
         self.msp.add_line((x, y), (stop_x, stop_y), dxfattribs={'color': 5})
+
+        placement_x = x + 1
+        placement_y = y + 1
+
+        if orientation == "vertical":
+            placement_x = x - 1
 
         if label:
             angle = math.degrees(math.atan2(stop_y - y, stop_x - x))
@@ -346,7 +352,7 @@ class SurveyDXFManager:
                     'rotation': angle
                 }
             ).set_placement(
-                (x + 1, y + 1),
+                (placement_x, placement_y),
                 align=TextEntityAlignment.TOP_LEFT,
             )
 

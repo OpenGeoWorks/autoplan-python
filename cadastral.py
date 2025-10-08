@@ -96,7 +96,7 @@ class CadastralPlan(PlanProps):
 
         # Offset text above/below the line
         normals = line_normals((leg.from_.easting, leg.from_.northing), (leg.to.easting, leg.to.northing), orientation)
-        offset_distance = self._get_drawing_extent() * 0.02
+        offset_distance = self._get_drawing_extent() * 0.04
         offset_inside_x = (normals[0][0] / math.hypot(*normals[0])) * offset_distance
         offset_inside_y = (normals[0][1] / math.hypot(*normals[0])) * offset_distance
         offset_outside_x = (normals[1][0] / math.hypot(*normals[1])) * offset_distance
@@ -104,7 +104,8 @@ class CadastralPlan(PlanProps):
 
         first_x += offset_outside_x; first_y += offset_outside_y
         last_x += offset_outside_x; last_y += offset_outside_y
-        mid_x += offset_inside_x; mid_y += offset_inside_y
+        mid_x +=  offset_inside_x; mid_y += offset_inside_y
+
 
         # Text angle adjustment
         text_angle = angle_deg
@@ -116,7 +117,7 @@ class CadastralPlan(PlanProps):
                                angle=text_angle, height=self.label_size)
         ld = line_direction(angle_deg)
         if ld == "left → right":
-            # self._drawer.add_label_mtext(f"{format_number(leg.bearing.degrees, "hundredth")}°         {format_number(leg.bearing.minutes, "tenth")}'", mid_x, mid_y,
+            # self._drawer.add_label_mtext(f"{format_number(leg.bearing.degrees, "hundredth")}°         {format_number(leg.bearing.minutes, "tenth")}'", mid_x + offset_outside_x, mid_y + offset_outside_y,
             #                        angle=text_angle, height=self.label_size)
             self._drawer.add_label(f"{format_number(leg.bearing.degrees, "hundredth")}°", first_x, first_y,
                                    angle=text_angle, height=self.label_size)
@@ -212,7 +213,8 @@ class CadastralPlan(PlanProps):
 
         self._drawer.add_north_arrow_label((coord.easting, northing_label_y),
                                            (coord.easting, northing_label_y + height), f"{coord.northing}mN",
-                                           self.label_size)
+                                           self.label_size, "vertical")
+
         self._drawer.draw_north_arrow_cross(coord.easting, coord.northing, self.beacon_size * 3)
 
     def draw(self):

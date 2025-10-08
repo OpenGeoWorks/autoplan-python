@@ -664,7 +664,7 @@ class LayoutPlan(PlanProps):
 
         # Offset text above/below the line
         normals = line_normals((leg.from_.easting, leg.from_.northing), (leg.to.easting, leg.to.northing), orientation)
-        offset_distance = self._get_drawing_extent() * 0.02
+        offset_distance = self._get_drawing_extent() * 0.04
         offset_inside_x = (normals[0][0] / math.hypot(*normals[0])) * offset_distance
         offset_inside_y = (normals[0][1] / math.hypot(*normals[0])) * offset_distance
         offset_outside_x = (normals[1][0] / math.hypot(*normals[1])) * offset_distance
@@ -973,7 +973,7 @@ class LayoutPlan(PlanProps):
 
         self._drawer.add_north_arrow_label((coord.easting, northing_label_y),
                                            (coord.easting, northing_label_y + height), f"{coord.northing}mN",
-                                           self.label_size)
+                                           self.label_size, "vertical")
         self._drawer.draw_north_arrow_cross(coord.easting, coord.northing, self.beacon_size * 3)
 
     def draw_beacons(self):
