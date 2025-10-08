@@ -156,7 +156,7 @@ class TopographicPlan(PlanProps):
             text_angle += 180
 
         # Add labels
-        self._drawer.add_label(f"{leg.distance:.2f} m", mid_x, mid_y,
+        self._drawer.add_label(f"{leg.distance:.2f}m", mid_x, mid_y,
                                angle=text_angle, height=self.label_size)
         ld = line_direction(angle_deg)
         if ld == "left → right":
