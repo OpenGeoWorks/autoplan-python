@@ -161,7 +161,7 @@ class PlanProps(BaseModel):
     longitudinal_profile_parameters: Optional[LongitudinalProfileParameters] = None
     footers: List[str] = []
     footer_size: float = 0.5
-    dxf_version: str = "R2010"
+    dxf_version: str = "R2007"
 
     def get_drawing_scale(self):
         if not self.scale:
