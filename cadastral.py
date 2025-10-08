@@ -179,7 +179,7 @@ class CadastralPlan(PlanProps):
         y_max = self._frame_coords[3]
 
         box_width = (x_max - x_min) / len(self.footers)
-        box_height = (y_max - y_min) * 0.2
+        box_height = (y_max - y_min) * 0.18
 
         for i, footer in enumerate(self.footers):
             x1 = x_min + i * box_width
@@ -209,7 +209,7 @@ class CadastralPlan(PlanProps):
         # for northing label
         northing_label_y = self._frame_coords[1]
         if len(self.footers) > 0:
-            northing_label_y = northing_label_y + ((self._frame_coords[3] - self._frame_coords[1]) * 0.2)
+            northing_label_y = northing_label_y + ((self._frame_coords[3] - self._frame_coords[1]) * 0.18)
 
         self._drawer.add_north_arrow_label((coord.easting, northing_label_y),
                                            (coord.easting, northing_label_y + height), f"{coord.northing}mN",

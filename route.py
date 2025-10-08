@@ -114,7 +114,7 @@ class RoutePlan(PlanProps):
         y_max = self._frame_coords[3]
 
         box_width = (x_max - x_min) / len(self.footers)
-        box_height = (y_max - y_min) * 0.2
+        box_height = (y_max - y_min) * 0.18
 
         for i, footer in enumerate(self.footers):
             x1 = x_min + i * box_width
