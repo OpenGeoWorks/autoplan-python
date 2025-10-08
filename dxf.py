@@ -32,7 +32,8 @@ class SurveyDXFManager:
         self.doc.header["$AUNITS"] = 1 # Degrees/minutes/seconds
         self.doc.header["$AUPREC"] = 3 # 0d00'00"
         self.doc.header["$ANGBASE"] = 90.0  # set 0° direction to North
-        print(dxf_version)
+        self.dxf_version = dxf_version
+        # print(dxf_version)
 
     def setup_layers(self):
         self.doc.layers.add(name="LABELS", color=colors.BLACK)
@@ -751,7 +752,7 @@ class SurveyDXFManager:
     def save_dwg(self, dxf_filepath: str, filepath: str = None):
         if not filepath:
             filepath = f"{self.get_filename()}.dwg"
-        odafc.convert(dxf_filepath, filepath)
+        odafc.convert(dxf_filepath, filepath, version=self.dxf_version)
 
     # def save(self, paper_size: str = "A4", orientation: str = "portrait"):
     #     # with tempfile.TemporaryDirectory() as tmpdir:
