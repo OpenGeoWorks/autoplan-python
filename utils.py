@@ -27,6 +27,26 @@ def line_direction(angle) -> str:
     else:
         return "right → left"
 
+
+def format_number(num, mode="tenth"):
+    if mode == "tenth":
+        # Add one zero if number < 10
+        if num < 10:
+            return f"0{num}"
+        return str(num)
+
+    elif mode == "hundredth":
+        # Add one zero if number < 100
+        # Add two zeros if number < 10
+        if num < 10:
+            return f"00{num}"
+        elif num < 100:
+            return f"0{num}"
+        return str(num)
+
+    else:
+        raise ValueError("mode must be either 'tenth' or 'hundredth'")
+
 def html_to_mtext(html_text: str):
     if not html_text:
         return ""

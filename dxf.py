@@ -32,6 +32,7 @@ class SurveyDXFManager:
         self.doc.header["$AUNITS"] = 1 # Degrees/minutes/seconds
         self.doc.header["$AUPREC"] = 3 # 0d00'00"
         self.doc.header["$ANGBASE"] = 90.0  # set 0° direction to North
+        print(dxf_version)
 
     def setup_layers(self):
         self.doc.layers.add(name="LABELS", color=colors.BLACK)
@@ -228,6 +229,18 @@ class SurveyDXFManager:
         hatch.set_pattern_fill('ANSI31', scale=0.5)
         hatch.paths.add_polyline_path(coords, is_closed=True)
 
+    def add_label_mtext(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0):
+        x = x * self.scale
+        y = y * self.scale
+        height = height * self.scale
+
+        text = self.msp.add_mtext(text=text, dxfattribs={'style': 'SURVEY_TEXT'})
+        text.dxf.attachment_point = ezdxf.enums.MTextEntityAlignment.MIDDLE_CENTER
+        text.dxf.char_height = height
+        text.set_location((x, y))
+        text.set_rotation(angle)
+
+
     def add_label(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0):
         x = x * self.scale
         y = y * self.scale
@@ -258,7 +271,7 @@ class SurveyDXFManager:
             dxfattribs={
                 'layer': 'TEXT',
                 'height': height,
-                'style': 'STANDARD',
+                'style': 'SURVEY_TEXT',
                 "rotation": rotation,
             }
         ).set_placement(
@@ -289,7 +302,7 @@ class SurveyDXFManager:
                 'color': 5,
             }
         ).set_placement(
-            ( -height * 0.3, height - (height * 0.25)),
+            ( -height * 0.3, height - (height * 0.2)),
             align=TextEntityAlignment.MIDDLE_CENTER
         )
 
@@ -300,7 +313,7 @@ class SurveyDXFManager:
                 'color': 5,
             }
         ).set_placement(
-            (height * 0.2, height - (height * 0.25)),
+            (height * 0.2, height - (height * 0.2)),
             align=TextEntityAlignment.MIDDLE_CENTER
         )
 
@@ -560,7 +573,7 @@ class SurveyDXFManager:
                 dxfattribs={
                     'layer': 'SPOT_HEIGHTS',
                     'height': text_height,
-                    'style': 'Standard',
+                    'style': 'SURVEY_TEXT',
                     'color': 7  # Black/White
                 }
             ).set_placement(
@@ -594,7 +607,7 @@ class SurveyDXFManager:
         self.msp.add_text(label, dxfattribs={
             "layer": "GRID_MESH",
             "height": text_height,
-            "style": "Standard",
+            "style": "SURVEY_TEXT",
             "rotation": rotation
         }).set_placement((x, y, z),)
 
@@ -618,7 +631,7 @@ class SurveyDXFManager:
         self.msp.add_text(label, dxfattribs={
             "layer": "GRID_MESH",
             "height": text_height,
-            "style": "Standard",
+            "style": "SURVEY_TEXT",
             "rotation": rotation
         }).set_placement((x, y, z),)
 
@@ -734,51 +747,51 @@ class SurveyDXFManager:
             filepath = f"{self.get_filename()}.dwg"
         odafc.convert(dxf_filepath, filepath)
 
-    # def save(self, paper_size: str = "A4", orientation: str = "portrait"):
-    #     # with tempfile.TemporaryDirectory() as tmpdir:
-    #     filename = self.get_filename()
-    #     dxf_path = os.path.join("", f"{filename}.dxf")
-    #     dwg_path =  os.path.join("", f"{filename}.dwg")
-    #     pdf_path =  os.path.join("", f"{filename}.pdf")
-    #     zip_path = os.path.join("", f"{filename}.zip")
-    #
-    #     self.save_dxf(dxf_path)
-    #     self.save_dwg(dxf_path, dwg_path)
-    #     self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
-    #
-    #     # Create a ZIP file containing all three formats
-    #     with zipfile.ZipFile(zip_path, "w") as zipf:
-    #         zipf.write(dxf_path, os.path.basename(dxf_path))
-    #         zipf.write(dwg_path, os.path.basename(dwg_path))
-    #         zipf.write(pdf_path, os.path.basename(pdf_path))
-    #
-    #     # url = upload_file(zip_path, folder="survey_plans", file_name=filename)
-    #     # if url is None:
-    #     #     raise Exception("Upload failed")
-    #     return "url"
-
     def save(self, paper_size: str = "A4", orientation: str = "portrait"):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filename = self.get_filename()
-            dxf_path = os.path.join(tmpdir, f"{filename}.dxf")
-            dwg_path =  os.path.join(tmpdir, f"{filename}.dwg")
-            pdf_path =  os.path.join(tmpdir, f"{filename}.pdf")
-            zip_path = os.path.join(tmpdir, f"{filename}.zip")
+        # with tempfile.TemporaryDirectory() as tmpdir:
+        filename = self.get_filename()
+        dxf_path = os.path.join("", f"{filename}.dxf")
+        dwg_path =  os.path.join("", f"{filename}.dwg")
+        pdf_path =  os.path.join("", f"{filename}.pdf")
+        zip_path = os.path.join("", f"{filename}.zip")
 
-            self.save_dxf(dxf_path)
-            self.save_dwg(dxf_path, dwg_path)
-            self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
+        self.save_dxf(dxf_path)
+        self.save_dwg(dxf_path, dwg_path)
+        self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
 
-            # Create a ZIP file containing all three formats
-            with zipfile.ZipFile(zip_path, "w") as zipf:
-                zipf.write(dxf_path, os.path.basename(dxf_path))
-                zipf.write(dwg_path, os.path.basename(dwg_path))
-                zipf.write(pdf_path, os.path.basename(pdf_path))
+        # Create a ZIP file containing all three formats
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            zipf.write(dxf_path, os.path.basename(dxf_path))
+            zipf.write(dwg_path, os.path.basename(dwg_path))
+            zipf.write(pdf_path, os.path.basename(pdf_path))
 
-            url = upload_file(zip_path, folder="survey_plans", file_name=filename)
-            if url is None:
-                raise Exception("Upload failed")
-            return url
+        # url = upload_file(zip_path, folder="survey_plans", file_name=filename)
+        # if url is None:
+        #     raise Exception("Upload failed")
+        return "url"
+
+    # def save(self, paper_size: str = "A4", orientation: str = "portrait"):
+    #     with tempfile.TemporaryDirectory() as tmpdir:
+    #         filename = self.get_filename()
+    #         dxf_path = os.path.join(tmpdir, f"{filename}.dxf")
+    #         dwg_path =  os.path.join(tmpdir, f"{filename}.dwg")
+    #         pdf_path =  os.path.join(tmpdir, f"{filename}.pdf")
+    #         zip_path = os.path.join(tmpdir, f"{filename}.zip")
+    #
+    #         self.save_dxf(dxf_path)
+    #         self.save_dwg(dxf_path, dwg_path)
+    #         self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
+    #
+    #         # Create a ZIP file containing all three formats
+    #         with zipfile.ZipFile(zip_path, "w") as zipf:
+    #             zipf.write(dxf_path, os.path.basename(dxf_path))
+    #             zipf.write(dwg_path, os.path.basename(dwg_path))
+    #             zipf.write(pdf_path, os.path.basename(pdf_path))
+    #
+    #         url = upload_file(zip_path, folder="survey_plans", file_name=filename)
+    #         if url is None:
+    #             raise Exception("Upload failed")
+    #         return url
 
 
 

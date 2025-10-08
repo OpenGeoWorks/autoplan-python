@@ -1,7 +1,6 @@
 from dxf import SurveyDXFManager
 from models.plan import PlanProps, PlanType
-from utils import polygon_orientation, line_normals, line_direction, html_to_mtext
-from pydantic import PrivateAttr
+from utils import polygon_orientation, line_normals, line_direction, html_to_mtext, format_number
 
 import math
 
@@ -113,19 +112,25 @@ class CadastralPlan(PlanProps):
             text_angle += 180
 
         # Add labels
-        self._drawer.add_label(f"{leg.distance:.2f} m", mid_x, mid_y,
+        self._drawer.add_label(f"{leg.distance:.2f}m", mid_x, mid_y,
                                angle=text_angle, height=self.label_size)
         ld = line_direction(angle_deg)
         if ld == "left → right":
-            self._drawer.add_label(f"{leg.bearing.degrees}°", first_x, first_y,
+            # self._drawer.add_label_mtext(f"{format_number(leg.bearing.degrees, "hundredth")}°         {format_number(leg.bearing.minutes, "tenth")}'", mid_x, mid_y,
+            #                        angle=text_angle, height=self.label_size)
+            self._drawer.add_label(f"{format_number(leg.bearing.degrees, "hundredth")}°", first_x, first_y,
                                    angle=text_angle, height=self.label_size)
-            self._drawer.add_label(f"{leg.bearing.minutes}'", last_x, last_y,
+            self._drawer.add_label(f"{format_number(leg.bearing.minutes, "tenth")}'", last_x, last_y,
                                    angle=text_angle, height=self.label_size)
         else:
-            self._drawer.add_label(f"{leg.bearing.degrees}°", last_x, last_y,
+
+            self._drawer.add_label(f"{format_number(leg.bearing.degrees, "hundredth")}°", last_x, last_y,
                                    angle=text_angle, height=self.label_size)
-            self._drawer.add_label(f"{leg.bearing.minutes}'", first_x, first_y,
+            self._drawer.add_label(f"{format_number(leg.bearing.minutes, "tenth")}'", first_x, first_y,
                                    angle=text_angle, height=self.label_size)
+            # print(
+            #     ''
+            # )
 
     def draw_frames(self):
         """Draw outer and offset frames."""
@@ -173,7 +178,7 @@ class CadastralPlan(PlanProps):
         y_max = self._frame_coords[3]
 
         box_width = (x_max - x_min) / len(self.footers)
-        box_height = (y_max - y_min) * 0.25
+        box_height = (y_max - y_min) * 0.2
 
         for i, footer in enumerate(self.footers):
             x1 = x_min + i * box_width
@@ -203,7 +208,7 @@ class CadastralPlan(PlanProps):
         # for northing label
         northing_label_y = self._frame_coords[1]
         if len(self.footers) > 0:
-            northing_label_y = northing_label_y + ((self._frame_coords[3] - self._frame_coords[1]) * 0.25)
+            northing_label_y = northing_label_y + ((self._frame_coords[3] - self._frame_coords[1]) * 0.2)
 
         self._drawer.add_north_arrow_label((coord.easting, northing_label_y),
                                            (coord.easting, northing_label_y + height), f"{coord.northing}mN",
