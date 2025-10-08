@@ -17,7 +17,7 @@ from typing import List, Tuple
 
 
 class SurveyDXFManager:
-    def __init__(self, plan_name: str = "Survey Plan", scale: float = 1.0, dxf_version="R2007"):
+    def __init__(self, plan_name: str = "Survey Plan", scale: float = 1.0, dxf_version="R2000"):
         self.plan_name = plan_name
         self.scale = scale
         self.doc = ezdxf.new(dxfversion=dxf_version)
