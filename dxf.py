@@ -753,51 +753,51 @@ class SurveyDXFManager:
             filepath = f"{self.get_filename()}.dwg"
         odafc.convert(dxf_filepath, filepath)
 
-    def save(self, paper_size: str = "A4", orientation: str = "portrait"):
-        # with tempfile.TemporaryDirectory() as tmpdir:
-        filename = self.get_filename()
-        dxf_path = os.path.join("", f"{filename}.dxf")
-        dwg_path =  os.path.join("", f"{filename}.dwg")
-        pdf_path =  os.path.join("", f"{filename}.pdf")
-        zip_path = os.path.join("", f"{filename}.zip")
-
-        self.save_dxf(dxf_path)
-        self.save_dwg(dxf_path, dwg_path)
-        self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
-
-        # Create a ZIP file containing all three formats
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            zipf.write(dxf_path, os.path.basename(dxf_path))
-            zipf.write(dwg_path, os.path.basename(dwg_path))
-            zipf.write(pdf_path, os.path.basename(pdf_path))
-
-        # url = upload_file(zip_path, folder="survey_plans", file_name=filename)
-        # if url is None:
-        #     raise Exception("Upload failed")
-        return "url"
-
     # def save(self, paper_size: str = "A4", orientation: str = "portrait"):
-    #     with tempfile.TemporaryDirectory() as tmpdir:
-    #         filename = self.get_filename()
-    #         dxf_path = os.path.join(tmpdir, f"{filename}.dxf")
-    #         dwg_path =  os.path.join(tmpdir, f"{filename}.dwg")
-    #         pdf_path =  os.path.join(tmpdir, f"{filename}.pdf")
-    #         zip_path = os.path.join(tmpdir, f"{filename}.zip")
+    #     # with tempfile.TemporaryDirectory() as tmpdir:
+    #     filename = self.get_filename()
+    #     dxf_path = os.path.join("", f"{filename}.dxf")
+    #     dwg_path =  os.path.join("", f"{filename}.dwg")
+    #     pdf_path =  os.path.join("", f"{filename}.pdf")
+    #     zip_path = os.path.join("", f"{filename}.zip")
     #
-    #         self.save_dxf(dxf_path)
-    #         self.save_dwg(dxf_path, dwg_path)
-    #         self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
+    #     self.save_dxf(dxf_path)
+    #     self.save_dwg(dxf_path, dwg_path)
+    #     self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
     #
-    #         # Create a ZIP file containing all three formats
-    #         with zipfile.ZipFile(zip_path, "w") as zipf:
-    #             zipf.write(dxf_path, os.path.basename(dxf_path))
-    #             zipf.write(dwg_path, os.path.basename(dwg_path))
-    #             zipf.write(pdf_path, os.path.basename(pdf_path))
+    #     # Create a ZIP file containing all three formats
+    #     with zipfile.ZipFile(zip_path, "w") as zipf:
+    #         zipf.write(dxf_path, os.path.basename(dxf_path))
+    #         zipf.write(dwg_path, os.path.basename(dwg_path))
+    #         zipf.write(pdf_path, os.path.basename(pdf_path))
     #
-    #         url = upload_file(zip_path, folder="survey_plans", file_name=filename)
-    #         if url is None:
-    #             raise Exception("Upload failed")
-    #         return url
+    #     # url = upload_file(zip_path, folder="survey_plans", file_name=filename)
+    #     # if url is None:
+    #     #     raise Exception("Upload failed")
+    #     return "url"
+
+    def save(self, paper_size: str = "A4", orientation: str = "portrait"):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filename = self.get_filename()
+            dxf_path = os.path.join(tmpdir, f"{filename}.dxf")
+            dwg_path =  os.path.join(tmpdir, f"{filename}.dwg")
+            pdf_path =  os.path.join(tmpdir, f"{filename}.pdf")
+            zip_path = os.path.join(tmpdir, f"{filename}.zip")
+
+            self.save_dxf(dxf_path)
+            self.save_dwg(dxf_path, dwg_path)
+            self.save_pdf(pdf_path, paper_size=paper_size, orientation=orientation)
+
+            # Create a ZIP file containing all three formats
+            with zipfile.ZipFile(zip_path, "w") as zipf:
+                zipf.write(dxf_path, os.path.basename(dxf_path))
+                zipf.write(dwg_path, os.path.basename(dwg_path))
+                zipf.write(pdf_path, os.path.basename(pdf_path))
+
+            url = upload_file(zip_path, folder="survey_plans", file_name=filename)
+            if url is None:
+                raise Exception("Upload failed")
+            return url
 
 
 
