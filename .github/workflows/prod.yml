@@ -23,7 +23,7 @@ jobs:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         run: |
           echo "Building and pushing docker image"
-          docker build -t $DOCKER_USERNAME/autoplan-python:latest .
+          docker buildx build --platform=linux/amd64 -t $DOCKER_USERNAME/autoplan-python:latest .
           docker push $DOCKER_USERNAME/autoplan-python:latest
 
       - name: Deploy to DigitalOcean

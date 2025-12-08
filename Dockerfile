@@ -10,8 +10,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Download ODA File Converter AppImage (replace with the latest version)
+# RUN wget -O /tmp/ODAFileConverter.AppImage \
+#     https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_26.8.AppImage
+
 RUN wget -O /tmp/ODAFileConverter.AppImage \
-    https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_26.8.AppImage
+    https://s3.us-east-2.amazonaws.com/tendar.co/ODAFileConverter_QT6_lnxX64_8.3dll_26.10.AppImage
+
 
 # Extract AppImage (avoids FUSE)
 RUN chmod +x /tmp/ODAFileConverter.AppImage \
