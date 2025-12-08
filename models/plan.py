@@ -136,7 +136,7 @@ class PlanProps(BaseModel):
     name: str
     type: PlanType = PlanType.CADASTRAL
     font: str = "Times New Roman"
-    font_size: int = 12
+    font_size: float = 12
     coordinates: Optional[List[CoordinateProps]] = None
     elevations: Optional[List[ElevationProps]] = None
     parcels: Optional[List[ParcelProps]] = None
