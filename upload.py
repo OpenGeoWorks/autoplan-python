@@ -1,22 +1,32 @@
-import os
-import cloudinary
-cloudinary.config(cloud_url=os.getenv("CLOUDINARY_URL"))
+"""File upload helper backed by Cloudinary.
 
+Requires the ``CLOUDINARY_URL`` environment variable, e.g.::
+
+    CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
+"""
+
+import logging
+
+import cloudinary
 import cloudinary.uploader
 
-def upload_file(file_path, folder="uploads", file_name=None):
-  """
-  Uploads a file to Cloudinary and returns the upload response.
-  """
-  try:
-    response = cloudinary.uploader.upload(
-      file_path,
-      folder=folder,  # optional: organizes uploads in a folder
-      public_id=file_name,
-      overwrite=True,  # overwrite if the file already exists
-      resource_type="auto"  # auto-detect (image, raw, video, etc.)
-    )
-    return response.get("secure_url")
-  except Exception as e:
-    print(f"Upload failed: {e}")
-    return None
+logger = logging.getLogger(__name__)
+
+# The Cloudinary SDK reads CLOUDINARY_URL from the environment.
+cloudinary.config(secure=True)
+
+
+def upload_file(file_path: str, folder: str = "uploads", file_name: str = None):
+    """Upload a file to Cloudinary and return its public URL (None on failure)."""
+    try:
+        response = cloudinary.uploader.upload(
+            file_path,
+            folder=folder,
+            public_id=file_name,
+            overwrite=True,
+            resource_type="auto",
+        )
+        return response.get("secure_url")
+    except Exception:
+        logger.exception("Upload to Cloudinary failed")
+        return None

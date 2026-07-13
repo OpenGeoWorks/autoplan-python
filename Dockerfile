@@ -40,5 +40,5 @@ COPY . .
 # Expose the port (Fly will map this automatically)
 EXPOSE 8080
 
-# Run with Gunicorn
-CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app"]
+# Run with Gunicorn (worker recycling + long timeouts configured in gunicorn.conf.py)
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]
