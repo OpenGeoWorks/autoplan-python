@@ -32,9 +32,9 @@ pip-wheel-metadata/
 *.ipynb
 
 # Environment files (secrets)
-#.env
-#.env.*
-#*.env
+.env
+.env.*
+*.env
 
 # IDE / editor configs
 .vscode/
