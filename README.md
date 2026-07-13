@@ -84,8 +84,18 @@ docker build -t survey-plan-generator .
 docker run --env-file .env -p 8080:8080 survey-plan-generator
 ```
 
-Deployment to [Fly.io](https://fly.io) is configured in `fly.toml` and
-`.github/workflows/fly.yml`.
+## Deployment
+
+Pushes to `main` trigger `.github/workflows/prod.yml`, which:
+
+1. builds the Docker image and pushes it to Docker Hub as
+   `<DOCKER_USERNAME>/autoplan-python:latest`, then
+2. connects to the production Ubuntu server over SSH and restarts the
+   service with Docker Compose (`docker compose pull && up -d`).
+
+The workflow needs these repository secrets: `DOCKER_USERNAME`,
+`DOCKER_PASSWORD`, `SERVER_HOST`, `SERVER_USERNAME`, `SERVER_SSH_KEY`,
+and `SERVER_PORT`.
 
 ## Notes
 
