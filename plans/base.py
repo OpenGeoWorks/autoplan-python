@@ -10,7 +10,7 @@ from typing import ClassVar, Optional
 
 from ezdxf.enums import TextEntityAlignment
 
-from dxf_manager import SurveyDXFManager
+from dxf_manager import PAPER_SIZES, SurveyDXFManager
 from models.plan import CoordinateProps, PlanProps, PlanType, TraverseLegProps
 from utils import format_number, html_to_mtext, line_direction, line_normals
 
@@ -70,7 +70,36 @@ class BasePlan(PlanProps):
         margin_x = max(width, height) * self._frame_x_percent
         margin_y = max(width, height) * self._frame_y_percent
 
-        return min_x - margin_x, min_y - margin_y, max_x + margin_x, max_y + margin_y
+        return self._fit_frame_to_page(
+            (min_x - margin_x, min_y - margin_y, max_x + margin_x, max_y + margin_y)
+        )
+
+    def _fit_frame_to_page(self, frame):
+        """Stretch the frame to the paper's aspect ratio so a landscape page
+        gets a landscape frame (and portrait a portrait one) and the drawing
+        fills the sheet when fitted to the page."""
+        page_size = getattr(self.page_size, "value", self.page_size)
+        orientation = getattr(self.page_orientation, "value", self.page_orientation)
+        paper_w, paper_h = PAPER_SIZES.get(str(page_size).upper(), PAPER_SIZES["A4"])
+        if str(orientation).lower() == "landscape":
+            paper_w, paper_h = paper_h, paper_w
+        # the PDF renderer applies 20 mm print margins on every side
+        aspect = (paper_w - 40) / (paper_h - 40)
+
+        left, bottom, right, top = frame
+        width = right - left
+        height = top - bottom
+
+        if width / height < aspect:
+            extra = height * aspect - width
+            left -= extra / 2
+            right += extra / 2
+        else:
+            extra = width / aspect - height
+            bottom -= extra / 2
+            top += extra / 2
+
+        return left, bottom, right, top
 
     def _get_drawing_extent(self) -> float:
         """Diagonal of the data bounding box, used to size labels and offsets."""
@@ -102,6 +131,7 @@ class BasePlan(PlanProps):
 
         margin_y = frame_top - max_y
         frame_width = frame_right - frame_left
+        frame_height = frame_top - frame_bottom
         frame_center_x = frame_left + (frame_width / 2)
         title_y = frame_top - (margin_y * 0.2)
 
@@ -111,7 +141,9 @@ class BasePlan(PlanProps):
             title_y,
             frame_width * 0.6,
             self.font_size,
-            graphical_scale_length=frame_width * 0.4,
+            # size the scale bar from the smaller frame side so the title
+            # stack does not grow into the drawing on landscape sheets
+            graphical_scale_length=min(frame_width, frame_height) * 0.4,
             area=self._area_text(),
             origin=self._origin_text(),
         )

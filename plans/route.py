@@ -39,8 +39,9 @@ logger = logging.getLogger(__name__)
 
 Point2 = Tuple[float, float]
 
-# Average character width as a fraction of text height (Times-like fonts)
-CHAR_W = 0.7
+# Average character width as a fraction of text height (Times-like fonts,
+# measured generously so sized boxes never clip their text)
+CHAR_W = 0.85
 
 
 class RoutePlan(BasePlan):
@@ -57,19 +58,35 @@ class RoutePlan(BasePlan):
         params = self.longitudinal_profile_parameters
         elev_start, elev_end, interval, _ = self._elevation_grid_range()
 
-        min_x, _, max_x, _ = box
+        min_x = box[0]
+        hscale = params.horizontal_scale or 1.0
+        spacing = params.station_interval * hscale
+
+        # The plan view is true to coordinate; the profile adjusts to it:
+        # each station's profile column sits at its true (chord-projected)
+        # plan position. Without a usable alignment, columns are uniform.
+        self._alignment = self._compute_alignment()
+        if self._alignment is not None:
+            station_xs = [min_x + along * hscale for along in self._alignment["along"]]
+        else:
+            station_xs = [min_x + i * spacing for i in range(len(self.elevations))]
+
+        self._station_xs = station_xs
+        max_x = station_xs[-1]
         width = max(max_x - min_x, 1e-6)
         grid_bottom = self._elevation_to_y(elev_start)
         grid_top = self._elevation_to_y(elev_end)
 
-        spacing = params.station_interval * (params.horizontal_scale or 1.0)
+        min_spacing = min(
+            (b - a for a, b in zip(station_xs, station_xs[1:])), default=spacing
+        )
 
         # Station text: readable relative to the sheet, clamped by the user's
         # label size; labels use a stride when stations are packed tighter
         # than the text needs.
-        station_text = min(self.label_size, width * 0.008)
-        station_text = max(station_text, width * 0.0045)
-        stride = max(1, math.ceil((station_text * 1.9) / max(spacing, 1e-6)))
+        station_text = min(self.label_size, width * 0.0055)
+        station_text = max(station_text, width * 0.003)
+        stride = max(1, math.ceil((station_text * 1.9) / max(min_spacing, 1e-6)))
 
         chain_chars = max((len(e.chainage or "") for e in self.elevations), default=5)
         value_chars = max((len(f"{e.elevation:g}") for e in self.elevations), default=5)
@@ -126,11 +143,13 @@ class RoutePlan(BasePlan):
         content_h = max_y - min_y
 
         margin_x = content_w * 0.08
-        margin_top = content_w * 0.21
+        margin_top = content_w * 0.26
         # bottom >= 0.18 * frame_height + clearance, frame_height depends on bottom
         margin_bottom = (0.18 * (content_h + margin_top) + content_w * 0.03) / (1 - 0.18)
 
-        return min_x - margin_x, min_y - margin_bottom, max_x + margin_x, max_y + margin_top
+        return self._fit_frame_to_page(
+            (min_x - margin_x, min_y - margin_bottom, max_x + margin_x, max_y + margin_top)
+        )
 
     def _setup_layers(self, drawer: SurveyDXFManager):
         drawer.setup_route_layers()
@@ -182,82 +201,109 @@ class RoutePlan(BasePlan):
     # ------------------------------------------------------------------
     # Plan view (horizontal alignment)
     # ------------------------------------------------------------------
-    def _prepare_plan_view(self):
-        """Transform the station coordinates into a band above the profile.
+    def _compute_alignment(self):
+        """Chord-decompose the station coordinates: distances along the
+        first-to-last chord (which become the profile column positions) and
+        lateral offsets across it (the plan view's true shape, rotated).
 
-        Strip-map convention: every station is plotted at its chainage
-        position — the same x as its profile column — while its lateral
-        offset from the route's chord is preserved. Plan and profile are
-        therefore exactly the same length and align station-for-station.
+        Returns None when there is no usable alignment: plan view disabled,
+        stations missing coordinates, or the route doubling back on its
+        chord (a warped profile would fold onto itself).
         """
         if not self.route_parameters.show_plan_view or not self.coordinates:
-            return
+            return None
 
         coord_map = {c.id: c for c in self.coordinates}
-        entries = [(i, coord_map[e.id]) for i, e in enumerate(self.elevations) if e.id in coord_map]
-        if len(entries) < 2:
-            logger.warning("Plan view skipped: fewer than 2 station coordinates match elevation ids.")
-            return
-        if len(entries) < len(self.elevations):
-            logger.warning("Plan view: %d of %d stations have coordinates.",
-                           len(entries), len(self.elevations))
+        stations = [coord_map.get(e.id) for e in self.elevations]
+        if any(c is None for c in stations) or len(stations) < 2:
+            if any(c is not None for c in stations):
+                logger.warning("Plan view skipped: every station needs a coordinate "
+                               "matching its elevation id.")
+            return None
 
-        params = self.longitudinal_profile_parameters
-        hscale = params.horizontal_scale or 1.0
-        grid = self._grid
-
-        # Lateral offsets from the first-to-last chord
-        first, last = entries[0][1], entries[-1][1]
+        first, last = stations[0], stations[-1]
         chord_x = last.easting - first.easting
         chord_y = last.northing - first.northing
         chord = math.hypot(chord_x, chord_y)
         if chord < 1e-6:
             logger.warning("Plan view skipped: route start and end coincide.")
-            return
+            return None
         ux, uy = chord_x / chord, chord_y / chord
-        angle = math.atan2(chord_y, chord_x)
 
-        across = [
-            (-(c.easting - first.easting) * uy + (c.northing - first.northing) * ux) * hscale
-            for _, c in entries
-        ]
+        along = [(c.easting - first.easting) * ux + (c.northing - first.northing) * uy
+                 for c in stations]
+        across = [-(c.easting - first.easting) * uy + (c.northing - first.northing) * ux
+                  for c in stations]
+
+        if any(b <= a for a, b in zip(along, along[1:])):
+            logger.warning("Plan view skipped: the route doubles back relative to its "
+                           "chord, so the profile cannot follow its plan positions.")
+            return None
+
+        return {
+            "along": along,
+            "across": across,
+            "angle_deg": math.degrees(math.atan2(chord_y, chord_x)),
+        }
+
+    def _prepare_plan_view(self):
+        """Place the true-shape plan view in a band above the profile.
+
+        The alignment is drawn true to coordinate (rotated so its chord runs
+        left to right); the profile columns already sit at each station's
+        plan position, so the two views align station-for-station.
+        """
+        if self._alignment is None:
+            return
+
+        params = self.longitudinal_profile_parameters
+        hscale = params.horizontal_scale or 1.0
+        grid = self._grid
+
+        across = [a * hscale for a in self._alignment["across"]]
 
         row_half = (self.route_parameters.right_of_way_width / 2) * hscale
         chain_chars = max((len(e.chainage or "") for e in self.elevations), default=5)
         tick_half = max(row_half * 0.25, grid["station_text"] * 0.6)
-        # Chainage labels extend past the ticks; reserve their reach in the band
-        label_reach = tick_half * 1.5 + chain_chars * CHAR_W * grid["station_text"]
-        pad = row_half + label_reach
+        # Chainage labels anchor clear of the right-of-way edge (not just the
+        # tick, which can end inside the corridor); reserve their full reach.
+        label_offset = max(tick_half * 1.5, row_half + grid["station_text"])
+        label_reach = label_offset + chain_chars * CHAR_W * grid["station_text"]
+        pad = max(row_half, label_reach) + grid["station_text"]
 
         grid_top = grid["grid_top"]
         grid_height = grid_top - grid["grid_bottom"]
-        gap = max(grid_height * 0.35, grid["width"] * 0.04)
+        header_h = min(grid["width"] * 0.012, self.label_size * 1.5)
+        # The gap hosts both view headers (PLAN under the band, LONGITUDINAL
+        # SECTION above the grid)
+        gap = max(grid_height * 0.35, grid["width"] * 0.05, header_h * 6)
 
         min_ly = min(across)
         ty = grid_top + gap + pad - min_ly
 
-        self._plan_points = [
-            (grid["min_x"] + i * grid["spacing"], a + ty) for (i, _), a in zip(entries, across)
-        ]
-        self._plan_rotation_deg = math.degrees(angle)
+        self._plan_points = [(x, a + ty) for x, a in zip(self._station_xs, across)]
+        self._plan_rotation_deg = self._alignment["angle_deg"]
         self._plan_tick_half = tick_half
+        self._plan_label_offset = label_offset
 
         xs = [p[0] for p in self._plan_points]
         ys = [p[1] for p in self._plan_points]
 
-        # Reserve room for the rotated north arrow to the right of the band
-        # and for the PLAN view header above it.
-        arrow_h = grid["width"] * 0.035
-        header_h = min(grid["width"] * 0.012, self.label_size * 1.5)
         band_top = max(ys) + pad
         band_bottom = min(ys) - pad
+
+        # PLAN header sits below the band, inside the gap — always clear of
+        # the title block above.
+        self._plan_header = ((min(xs) + max(xs)) / 2, band_bottom - header_h * 0.8, header_h)
+
+        # Reserve room for the rotated north arrow to the right of the band
+        arrow_h = grid["width"] * 0.035
         self._plan_arrow = (max(xs) + grid["width"] * 0.02, (band_top + band_bottom) / 2 - arrow_h / 2, arrow_h)
-        self._plan_header = ((min(xs) + max(xs)) / 2, band_top + header_h * 0.8, header_h)
         self._plan_band = (
             min(xs),
             band_bottom,
             max(xs) + grid["width"] * 0.02 + arrow_h * 1.2,
-            band_top + header_h * 2.4,
+            band_top,
         )
 
     def draw_plan_view(self):
@@ -309,17 +355,17 @@ class RoutePlan(BasePlan):
                     alignment = TextEntityAlignment.MIDDLE_RIGHT
                 self._drawer.add_text(
                     self.elevations[i].chainage if i < len(self.elevations) else "",
-                    x + nx * tick_half * 1.5,
-                    y + ny * tick_half * 1.5,
+                    x + nx * self._plan_label_offset,
+                    y + ny * self._plan_label_offset,
                     text_h,
                     rotation=label_angle,
                     alignment=alignment,
                 )
 
-        # View header and rotated north arrow (inside the reserved band area)
+        # View header (below the band) and rotated north arrow
         header_x, header_y, header_h = self._plan_header
         self._drawer.add_text("PLAN", header_x, header_y, header_h,
-                              alignment=TextEntityAlignment.BOTTOM_CENTER)
+                              alignment=TextEntityAlignment.TOP_CENTER)
 
         arrow_x, arrow_y, arrow_h = self._plan_arrow
         self._drawer.draw_north_arrow(arrow_x, arrow_y, arrow_h,
@@ -354,29 +400,34 @@ class RoutePlan(BasePlan):
         self._drawer.add_grid_line(max_x, value_row_top, max_x, chain_row_bottom)
         self._drawer.add_grid_line(min_x, value_row_top, min_x, chain_row_bottom)
 
-        header_x = table_left + text_h
+        # Header text shrinks to fit its box, centered so any font-width
+        # variance spreads to both sides instead of crossing the graph edge.
+        header_text = min(text_h, (grid["table_width"] * 0.9) / (len("GROUND ELEV") * CHAR_W))
+        header_x = (table_left + min_x) / 2
         self._drawer.add_text("GROUND ELEV", header_x,
-                              (value_row_top + value_row_bottom) / 2, text_h,
-                              alignment=TextEntityAlignment.MIDDLE_LEFT)
+                              (value_row_top + value_row_bottom) / 2, header_text,
+                              alignment=TextEntityAlignment.MIDDLE_CENTER)
         self._drawer.add_text("STATION", header_x,
-                              (value_row_bottom + chain_row_bottom) / 2, text_h,
-                              alignment=TextEntityAlignment.MIDDLE_LEFT)
+                              (value_row_bottom + chain_row_bottom) / 2, header_text,
+                              alignment=TextEntityAlignment.MIDDLE_CENTER)
 
-        # Station verticals every station; values/chainages every stride
+        # Station verticals every station; values/chainages every stride.
+        # Columns sit at each station's true plan position.
         params = self.longitudinal_profile_parameters
-        x = min_x
         for i, elevation in enumerate(self.elevations):
+            x = self._station_xs[i]
             self._drawer.add_grid_line(x, chain_row_bottom, x, grid_top)
             if i % stride == 0:
+                # BOTTOM_CENTER + 90° rotation centers the string's length on
+                # the anchor, so anchor at the row middle to keep it inside.
                 self._drawer.add_text(
                     f"{elevation.elevation:g}", x,
-                    value_row_bottom + text_h * 0.7, text_h,
+                    value_row_bottom + grid["value_row"] / 2, text_h,
                     alignment=TextEntityAlignment.BOTTOM_CENTER, rotation=90)
                 self._drawer.add_text(
                     elevation.chainage, x,
-                    chain_row_bottom + text_h * 0.7, text_h,
+                    chain_row_bottom + grid["chain_row"] / 2, text_h,
                     alignment=TextEntityAlignment.BOTTOM_CENTER, rotation=90)
-            x += grid["spacing"]
 
         # Horizontal elevation lines with labels on the left (strided when
         # the interval spacing is tighter than the text)
@@ -402,12 +453,8 @@ class RoutePlan(BasePlan):
                                   header_h, alignment=TextEntityAlignment.MIDDLE_CENTER)
 
     def draw_profile_line(self):
-        params = self.longitudinal_profile_parameters
-        x0 = params.profile_origin[0]
-
         points = [
-            (x0 + i * params.station_interval * params.horizontal_scale,
-             self._elevation_to_y(e.elevation))
+            (self._station_xs[i], self._elevation_to_y(e.elevation))
             for i, e in enumerate(self.elevations)
         ]
         self._drawer.add_profile(points)
