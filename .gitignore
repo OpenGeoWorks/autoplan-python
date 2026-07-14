@@ -78,3 +78,7 @@ Thumbs.db
 *.dwl
 *.dwl2
 *.pdf
+
+# Local tooling / private test data
+.claude/
+tests/topo-payload.json
