@@ -16,8 +16,47 @@ are handled by a separate API server.
 |------|----------|-------------|
 | Cadastral | `POST /cadastral/plan` | Property beacons, parcel boundaries, bearing/distance labels |
 | Topographic | `POST /topographic/plan` | Spot heights, site boundary, TIN/grid contours |
-| Route | `POST /route/plan` | Longitudinal profile with station/elevation grid |
-| Layout | `POST /layout/plan` | Subdivision layouts (experimental, under development) |
+| Route | `POST /route/plan` | Plan-and-profile sheet (see below) |
+| Layout | `POST /layout/plan` | Estate subdivision schemes (see below) |
+
+### Route plans
+
+Route plans are drawn as the industry-standard **plan-and-profile sheet**:
+
+- **Plan view (horizontal alignment)** — drawn when the payload carries
+  station coordinates (`coordinates` whose ids match the `elevations` ids).
+  The route is rotated to run left-to-right above the profile, with chainage
+  ticks/labels, right-of-way edges (`route_parameters.right_of_way_width`),
+  and a north arrow rotated to match.
+- **Longitudinal profile** — existing ground level against chainage over a
+  station/elevation grid, at the scales in
+  `longitudinal_profile_parameters`.
+
+Payloads without station coordinates draw the profile only (backward
+compatible).
+
+### Layout plans
+
+Layout plans work in two modes:
+
+- **Draw mode** — the payload provides the plot corner coordinate register
+  (`coordinates`), the `plots` (corner ids per plot, with block/number/use),
+  and optionally `roads`; the scheme is drawn as given.
+- **Generate mode** — only the perimeter (`layout_boundary`) and design
+  parameters (`layout_parameters`) are provided. The subdivision is designed
+  automatically using the standard Nigerian pattern: a major spine road along
+  the site's long axis, cross streets limiting block length, double-loaded
+  blocks of frontage x depth plots (default 15 m x 30 m), commercial plots
+  along the spine, open-space and facility reservations, and per-block plot
+  numbering with a land-use schedule table.
+
+Either way the exported ZIP includes `setting_out_coordinates.csv` — the
+coordinates of every boundary beacon, plot corner, and road centerline point,
+ready for field setting-out.
+
+Perimeter bearings/distances are computed upstream by the AutoPlan API and
+arrive in the payload as `layout_boundary.legs`; when absent, plans are
+drawn without the perimeter leg labels.
 
 All endpoints accept a JSON payload described by `models/plan.py`
 (`PlanProps`) and respond with:

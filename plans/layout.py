@@ -1,63 +1,63 @@
-"""Layout (subdivision) survey plan generator.
+"""Layout (subdivision/estate scheme) plan generator.
 
-Status: experimental / under active development. Generates a road network
-over the site boundary, subdivides the remaining blocks into plots, and
-draws the result. Road patterns: grid, radial, organic, or mixed.
+Supports the two ways layout jobs arrive in practice:
+
+1. **Draw mode** — the scheme is already designed: the payload carries the
+   plot corner coordinate register (``coordinates``), the ``plots`` (corner
+   ids per plot), and optionally ``roads``. The plan is simply drawn.
+
+2. **Generate mode** — only the perimeter (``layout_boundary``) and design
+   parameters (``layout_parameters``) are given. The subdivision is designed
+   automatically using the standard Nigerian pattern: a major spine road
+   along the site's long axis, cross streets limiting block length, and
+   double-loaded blocks of frontage x depth plots (default 15 m x 30 m),
+   with open space and facility reservations. Generation fills in the same
+   ``coordinates``/``plots``/``roads`` structures that draw mode consumes.
+
+Either way, the exported bundle includes a setting-out CSV with the
+coordinates of every plot corner beacon for field staking. Perimeter
+bearings/distances are computed upstream by the AutoPlan API and arrive in
+the payload as ``layout_boundary.legs``; when absent the perimeter is drawn
+without leg labels.
 """
 
+import logging
 import math
-import random
+import string
 from typing import ClassVar, Dict, List, Optional, Tuple
 
-import numpy as np
-from pydantic import BaseModel
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from ezdxf.enums import TextEntityAlignment
+from shapely import affinity
+from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 from dxf_manager import SurveyDXFManager
-from models.plan import CoordinateProps, PlanType
+from models.plan import (
+    CoordinateProps,
+    LayoutPlotProps,
+    LayoutRoadProps,
+    PlanType,
+)
 from plans.base import BasePlan
 from utils import polygon_orientation
 
+logger = logging.getLogger(__name__)
 
-class ParcelInfo(BaseModel):
-    """Information about a generated parcel"""
-    id: str
-    vertices: List[Tuple[float, float]]
-    area: float
-    width: float
-    depth: float
-    centroid: Tuple[float, float]
-    street_frontage: List[Tuple[float, float]]
-    buildable_area: List[Tuple[float, float]]
+Point2 = Tuple[float, float]
+
+# Uses that are drawn hatched as green/open areas
+OPEN_USES = {"open_space", "green", "park"}
 
 
-def create_smooth_curve(control_points: List[Tuple[float, float]],
-                        num_points: int) -> List[Tuple[float, float]]:
-    """Create a smooth curve through control points using a Catmull-Rom spline."""
-    if len(control_points) < 4:
-        return control_points
-
-    result = []
-    for i in range(len(control_points) - 3):
-        p0, p1, p2, p3 = control_points[i:i + 4]
-        for t in np.linspace(0, 1, num_points // (len(control_points) - 3)):
-            t2 = t * t
-            t3 = t2 * t
-
-            x = 0.5 * ((2 * p1[0]) +
-                       (-p0[0] + p2[0]) * t +
-                       (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
-                       (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3)
-
-            y = 0.5 * ((2 * p1[1]) +
-                       (-p0[1] + p2[1]) * t +
-                       (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
-                       (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
-
-            result.append((x, y))
-
-    return result
+def _block_label(index: int) -> str:
+    """0 -> A, 25 -> Z, 26 -> AA ..."""
+    letters = string.ascii_uppercase
+    label = ""
+    index += 1
+    while index > 0:
+        index, rem = divmod(index - 1, 26)
+        label = letters[rem] + label
+    return label
 
 
 class LayoutPlan(BasePlan):
@@ -65,20 +65,23 @@ class LayoutPlan(BasePlan):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        if not self.layout_boundary or not self.layout_boundary.coordinates:
-            raise ValueError("Layout plans require a layout boundary with coordinates.")
-        if self.layout_parameters is None:
-            raise ValueError("Layout plans require layout parameters.")
+        if not self.layout_boundary or len(self.layout_boundary.coordinates) < 3:
+            raise ValueError("Layout plans require a layout boundary with at least 3 coordinates.")
 
-        self._boundary_dict = {coord.id: coord for coord in self.layout_boundary.coordinates}
-        self._boundary_polygon = Polygon(
-            [(p.easting, p.northing) for p in self.layout_boundary.coordinates]
-        )
-        self._parcels: List[ParcelInfo] = []
-        self._roads: List[Dict] = []
-        self._green_spaces: List[Polygon] = []
-        self._blocks: List[Polygon] = []
-        self._roads_union: Optional[Polygon | MultiPolygon] = None
+        boundary_points = [(p.easting, p.northing) for p in self.layout_boundary.coordinates]
+        self._boundary_polygon = Polygon(boundary_points)
+        if not self._boundary_polygon.is_valid:
+            self._boundary_polygon = self._boundary_polygon.buffer(0)
+        if self._boundary_polygon.is_empty:
+            raise ValueError("Layout boundary is not a valid polygon.")
+
+        # Coordinate register: id -> (easting, northing). Boundary beacons
+        # are part of the register so roads/plots may reference them too.
+        self._register: Dict[str, Point2] = {}
+        for coord in self.layout_boundary.coordinates:
+            self._register.setdefault(coord.id, (coord.easting, coord.northing))
+        for coord in self.coordinates or []:
+            self._register.setdefault(coord.id, (coord.easting, coord.northing))
 
     def _setup_layers(self, drawer: SurveyDXFManager):
         drawer.setup_layout_layers()
@@ -95,371 +98,313 @@ class LayoutPlan(BasePlan):
         return self.layout_boundary.coordinates[0]
 
     # ------------------------------------------------------------------
-    # Road network generation
+    # Boundary computations
     # ------------------------------------------------------------------
-    def _append_road_intersection(self, intersection, road_type: str, width: float, name_prefix: str):
-        """Store the parts of a road centerline that fall inside the boundary."""
-        if intersection.is_empty:
-            return
+    def _ensure_boundary_computations(self):
+        """Fill in the boundary area when missing.
 
-        if intersection.geom_type == "LineString":
-            lines = [intersection]
-        elif intersection.geom_type == "MultiLineString":
-            lines = list(intersection.geoms)
-        else:
-            return
+        Perimeter legs (bearings/distances) are the AutoPlan API's job — it
+        back-computes them and sends them in the payload. When absent, the
+        perimeter is drawn without bearing/distance labels.
+        """
+        if self.layout_boundary.area is None:
+            self.layout_boundary.area = round(self._boundary_polygon.area, 3)
 
-        for line in lines:
-            self._roads.append({
-                "type": road_type,
-                "centerline": list(line.coords),
-                "width": width,
-                "name": f"{name_prefix} {len(self._roads) + 1}",
-            })
-
-    def _generate_grid_roads(self):
-        """Generate a grid pattern road network."""
-        min_x, min_y, max_x, max_y = self._boundary_polygon.bounds
-        params = self.layout_parameters
-
-        x_spacing = params.max_block_length + params.main_road_width
-        y_spacing = params.max_block_width + params.secondary_road_width
-
-        # Main roads (horizontal)
-        y = min_y + y_spacing
-        while y < max_y - y_spacing:
-            road_line = LineString([(min_x - 10, y), (max_x + 10, y)])
-            self._append_road_intersection(
-                road_line.intersection(self._boundary_polygon),
-                "main", params.main_road_width, "Street",
-            )
-            y += y_spacing
-
-        # Secondary roads (vertical)
-        x = min_x + x_spacing
-        while x < max_x - x_spacing:
-            road_line = LineString([(x, min_y - 10), (x, max_y + 10)])
-            self._append_road_intersection(
-                road_line.intersection(self._boundary_polygon),
-                "secondary", params.secondary_road_width, "Avenue",
-            )
-            x += x_spacing
-
-    def _generate_radial_roads(self):
-        """Generate a radial pattern road network."""
-        centroid = self._boundary_polygon.centroid
-        center_x, center_y = centroid.x, centroid.y
-        params = self.layout_parameters
-
-        # Radial roads out from the centroid
-        num_radial = 8
-        for i in range(num_radial):
-            angle = (i * 360 / num_radial) * math.pi / 180
-            end_x = center_x + math.cos(angle) * 1000
-            end_y = center_y + math.sin(angle) * 1000
-
-            road_line = LineString([(center_x, center_y), (end_x, end_y)])
-            self._append_road_intersection(
-                road_line.intersection(self._boundary_polygon),
-                "main", params.main_road_width, "Radial",
-            )
-
-        # Concentric ring roads
-        bounds = self._boundary_polygon.bounds
-        max_radius = min(bounds[2] - bounds[0], bounds[3] - bounds[1]) / 2
-        num_circles = 3
-
-        for i in range(1, num_circles + 1):
-            radius = (i * max_radius) / (num_circles + 1)
-            ring = Point(center_x, center_y).buffer(radius).boundary
-            self._append_road_intersection(
-                ring.intersection(self._boundary_polygon),
-                "secondary", params.secondary_road_width, "Ring Road",
-            )
-
-    def _generate_organic_roads(self):
-        """Generate an organic/curved road network."""
-        min_x, min_y, max_x, max_y = self._boundary_polygon.bounds
-        params = self.layout_parameters
-
-        num_main_roads = 3
-        for i in range(num_main_roads):
-            t = (i + 1) / (num_main_roads + 1)
-            start_y = min_y + t * (max_y - min_y)
-
-            control_points = [
-                (min_x, start_y),
-                (min_x + (max_x - min_x) * 0.3, start_y + random.uniform(-20, 20)),
-                (min_x + (max_x - min_x) * 0.7, start_y + random.uniform(-20, 20)),
-                (max_x, start_y + random.uniform(-10, 10)),
-            ]
-
-            coords = create_smooth_curve(control_points, 20)
-            road_line = LineString(coords)
-            self._append_road_intersection(
-                road_line.intersection(self._boundary_polygon),
-                "main", params.main_road_width, "Parkway",
-            )
-
-        self._add_organic_connectors()
-
-    def _generate_mixed_roads(self):
-        """Generate a mixed pattern combining grid and organic elements."""
-        self._generate_grid_roads()
-
-        min_x, min_y, max_x, max_y = self._boundary_polygon.bounds
-        control_points = [
-            (min_x, min_y),
-            ((min_x + max_x) / 2, (min_y + max_y) / 2),
-            (max_x, max_y),
-        ]
-
-        coords = create_smooth_curve(control_points, 30)
-        road_line = LineString(coords)
-        self._append_road_intersection(
-            road_line.intersection(self._boundary_polygon),
-            "main", self.layout_parameters.main_road_width, "Boulevard",
-        )
-
-    def _add_organic_connectors(self):
-        """Add connecting roads for organic layout."""
-        if len(self._roads) < 2:
-            return
-
-        for i in range(0, len(self._roads) - 1, 2):
-            road1 = self._roads[i]["centerline"]
-            road2 = self._roads[min(i + 1, len(self._roads) - 1)]["centerline"]
-
-            mid1 = road1[len(road1) // 2]
-            mid2 = road2[len(road2) // 2]
-
-            self._roads.append({
-                "type": "access",
-                "centerline": [mid1, mid2],
-                "width": self.layout_parameters.access_road_width,
-                "name": f"Lane {i + 1}",
-            })
+        if not self.layout_boundary.legs:
+            logger.warning("Layout boundary has no legs; the perimeter will be drawn "
+                           "without bearing/distance labels.")
 
     # ------------------------------------------------------------------
-    # Blocks, green spaces, parcels
+    # Generate mode: double-loaded grid subdivision
     # ------------------------------------------------------------------
-    def _generate_blocks(self):
-        """Generate blocks by subtracting the road network from the boundary."""
-        road_polygons = [
-            LineString(road["centerline"]).buffer(road["width"] / 2)
-            for road in self._roads
-        ]
+    def _orientation_angle(self) -> float:
+        """Angle (degrees) of the block axis; blocks run along this axis."""
+        orientation = self.layout_parameters.blocks.orientation
+        if orientation == "ew":
+            return 0.0
+        if orientation == "ns":
+            return 90.0
 
-        if not road_polygons:
-            self._blocks = [self._boundary_polygon]
-            return
+        # auto: longest edge of the minimum rotated rectangle
+        rect = self._boundary_polygon.minimum_rotated_rectangle
+        coords = list(rect.exterior.coords)
+        best_len, best_angle = 0.0, 0.0
+        for i in range(len(coords) - 1):
+            (x1, y1), (x2, y2) = coords[i], coords[i + 1]
+            length = math.hypot(x2 - x1, y2 - y1)
+            if length > best_len:
+                best_len = length
+                best_angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+        return best_angle
 
-        self._roads_union = unary_union(road_polygons)
-        blocks_area = self._boundary_polygon.difference(self._roads_union)
+    def _row_widths(self, row_width: float) -> List[float]:
+        """Split a row of ``row_width`` into plot frontages per the strategy."""
+        plot = self.layout_parameters.plot
+        n = int(row_width // plot.frontage)
+        if n == 0:
+            return [row_width]
 
-        if blocks_area.geom_type == "Polygon":
-            self._blocks = [blocks_area]
-        elif blocks_area.geom_type == "MultiPolygon":
-            self._blocks = list(blocks_area.geoms)
+        remainder = row_width - n * plot.frontage
+        strategy = plot.remainder_strategy
+        separable = remainder * plot.depth >= plot.min_area
 
-    def _allocate_green_spaces(self):
-        """Allocate green spaces within the largest blocks."""
-        if not self._blocks:
-            return
+        if remainder < 1e-6:
+            return [plot.frontage] * n
+        if strategy == "distribute":
+            return [row_width / n] * n
+        if strategy == "separate" and separable:
+            return [plot.frontage] * n + [remainder]
 
-        total_area = self._boundary_polygon.area
-        target_green_area = total_area * (self.layout_parameters.green_space_percentage / 100)
-        current_green_area = 0.0
+        # add_to_last (default): a remainder over half a frontage becomes its
+        # own smaller plot when viable — widening the last plot that much
+        # would create an oversized parcel no designer would draw.
+        if remainder >= plot.frontage * 0.5 and separable:
+            return [plot.frontage] * n + [remainder]
+        widths = [plot.frontage] * n
+        widths[-1] += remainder
+        return widths
 
-        for block in sorted(self._blocks, key=lambda b: b.area, reverse=True):
-            if current_green_area >= target_green_area:
+    def _generate_layout(self):
+        """Design the subdivision and fill self.plots / self.roads / self.coordinates."""
+        params = self.layout_parameters
+        plot_p, road_p, block_p, reserve_p = params.plot, params.roads, params.blocks, params.reserves
+
+        angle = self._orientation_angle()
+        origin = self._boundary_polygon.centroid
+        work = affinity.rotate(self._boundary_polygon, -angle, origin=origin)
+        min_x, min_y, max_x, max_y = work.bounds
+
+        strip_height = 2 * plot_p.depth if block_p.double_loaded else plot_p.depth
+        min_band = plot_p.depth * 0.4  # ignore leftover bands shallower than this
+
+        # -- Horizontal structure: spine road through the middle, block
+        #    strips separated by access roads above and below it.
+        spine_y = (min_y + max_y) / 2
+        strips: List[dict] = []  # {y0, y1, fronts_spine: 'bottom'|'top'|None}
+        road_ys: List[Tuple[float, float]] = [(spine_y, road_p.major_width)]  # (centerline y, width)
+
+        y = spine_y + road_p.major_width / 2
+        first = True
+        while y < max_y - min_band:
+            y1 = min(y + strip_height, max_y)
+            strips.append({"y0": y, "y1": y1, "fronts_spine": "bottom" if first else None})
+            first = False
+            y = y1 + road_p.access_width
+            if y < max_y - min_band:
+                road_ys.append((y1 + road_p.access_width / 2, road_p.access_width))
+
+        y = spine_y - road_p.major_width / 2
+        first = True
+        while y > min_y + min_band:
+            y0 = max(y - strip_height, min_y)
+            strips.append({"y0": y0, "y1": y, "fronts_spine": "top" if first else None})
+            first = False
+            y = y0 - road_p.access_width
+            if y > min_y + min_band:
+                road_ys.append((y0 - road_p.access_width / 2, road_p.access_width))
+
+        # -- Vertical structure: cross streets limit block length.
+        width_x = max_x - min_x
+        n_cells = max(1, math.ceil((width_x + road_p.collector_width) /
+                                   (block_p.max_length + road_p.collector_width)))
+        cell_len = (width_x - (n_cells - 1) * road_p.collector_width) / n_cells
+
+        cells: List[Tuple[float, float]] = []
+        road_xs: List[Tuple[float, float]] = []
+        x = min_x
+        for i in range(n_cells):
+            cells.append((x, x + cell_len))
+            x += cell_len
+            if i < n_cells - 1:
+                road_xs.append((x + road_p.collector_width / 2, road_p.collector_width))
+                x += road_p.collector_width
+
+        # -- Cut plots block by block (top-left block first for numbering).
+        strips.sort(key=lambda s: -s["y1"])
+        raw_plots: List[dict] = []  # {geometry, block, row, order, use}
+        block_index = 0
+
+        for strip in strips:
+            height = strip["y1"] - strip["y0"]
+            for cell_x0, cell_x1 in cells:
+                block_region = Polygon([
+                    (cell_x0, strip["y0"]), (cell_x1, strip["y0"]),
+                    (cell_x1, strip["y1"]), (cell_x0, strip["y1"]),
+                ]).intersection(work)
+                if block_region.is_empty or block_region.area < plot_p.min_area:
+                    continue
+
+                block = _block_label(block_index)
+                block_index += 1
+
+                # Double-loaded: split at the back-of-plot line in the middle
+                if block_p.double_loaded and height >= 1.2 * plot_p.depth:
+                    mid = (strip["y0"] + strip["y1"]) / 2
+                    rows = [(strip["y0"], mid, "bottom"), (mid, strip["y1"], "top")]
+                else:
+                    rows = [(strip["y0"], strip["y1"], "bottom")]
+
+                order = 0
+                for row_y0, row_y1, side in rows:
+                    fronts_spine = strip["fronts_spine"] == side
+                    row_x = cell_x0
+                    for width in self._row_widths(cell_x1 - cell_x0):
+                        rect = Polygon([
+                            (row_x, row_y0), (row_x + width, row_y0),
+                            (row_x + width, row_y1), (row_x, row_y1),
+                        ])
+                        row_x += width
+
+                        clipped = rect.intersection(work)
+                        pieces = list(clipped.geoms) if isinstance(clipped, MultiPolygon) else [clipped]
+                        for piece in pieces:
+                            if piece.is_empty or piece.geom_type != "Polygon":
+                                continue
+                            if piece.area < plot_p.min_area:
+                                continue
+                            use = "commercial" if (reserve_p.commercial_along_major and fronts_spine) \
+                                else "residential"
+                            raw_plots.append({
+                                "geometry": piece,
+                                "block": block,
+                                "row": side,
+                                "order": order,
+                                "use": use,
+                            })
+                            order += 1
+
+        if not raw_plots:
+            raise ValueError("Layout generation produced no plots — check the boundary and parameters.")
+
+        # -- Reserves: facilities take whole rows near the centre; open space
+        #    converts the plots nearest the centre until the target is met.
+        centroid = work.centroid
+
+        for facility in reserve_p.facilities:
+            groups: Dict[Tuple[str, str], List[dict]] = {}
+            for p in raw_plots:
+                if p["use"] == "residential":
+                    groups.setdefault((p["block"], p["row"]), []).append(p)
+            if not groups:
                 break
-            if block.area <= 5000:  # only for large blocks
-                continue
+            key = min(groups, key=lambda k: unary_union(
+                [p["geometry"] for p in groups[k]]).centroid.distance(centroid))
+            members = groups[key]
+            merged = unary_union([p["geometry"] for p in members])
+            if isinstance(merged, MultiPolygon):
+                merged = max(merged.geoms, key=lambda g: g.area)
+            keeper = min(members, key=lambda p: p["order"])
+            keeper["geometry"] = merged
+            keeper["use"] = facility
+            for p in members:
+                if p is not keeper:
+                    raw_plots.remove(p)
 
-            centroid = block.centroid
-            green_radius = min(20.0, math.sqrt(block.area) * 0.15)
-            green_space = Point(centroid.x, centroid.y).buffer(green_radius).intersection(block)
+        if reserve_p.open_space_percent > 0:
+            target = self._boundary_polygon.area * reserve_p.open_space_percent / 100.0
+            reserved = 0.0
+            candidates = sorted(
+                (p for p in raw_plots if p["use"] == "residential"),
+                key=lambda p: p["geometry"].centroid.distance(centroid),
+            )
+            for p in candidates:
+                if reserved >= target:
+                    break
+                p["use"] = "open_space"
+                reserved += p["geometry"].area
 
-            if not green_space.is_empty:
-                self._green_spaces.append(green_space)
-                current_green_area += green_space.area
+        # -- Roads: clip each centerline to the boundary.
+        road_records: List[dict] = []  # {name, width, line}
+        road_number = 1
+        spine_name = road_p.major_road_name or f"Road {road_number}"
 
-                # Remove the green space from the block before parcel generation
-                idx = self._blocks.index(block)
-                self._blocks[idx] = block.difference(green_space)
+        def clip_road(line: LineString) -> List[LineString]:
+            clipped = line.intersection(work)
+            if clipped.is_empty:
+                return []
+            if clipped.geom_type == "LineString":
+                return [clipped]
+            return [g for g in clipped.geoms if g.geom_type == "LineString" and g.length > 1.0]
 
-    def _generate_parcels(self):
-        """Generate parcels (final plots) within blocks."""
-        parcel_id = 1
+        for cy, width in road_ys:
+            for segment in clip_road(LineString([(min_x - 10, cy), (max_x + 10, cy)])):
+                name = spine_name if (cy == spine_y) else f"Road {road_number + 1}"
+                if cy != spine_y:
+                    road_number += 1
+                road_records.append({"name": name, "width": width, "line": segment})
+        road_number += 1
+        for cx, width in road_xs:
+            for segment in clip_road(LineString([(cx, min_y - 10), (cx, max_y + 10)])):
+                road_records.append({"name": f"Road {road_number}", "width": width, "line": segment})
+                road_number += 1
 
-        for block in self._blocks:
-            if block.area < self.layout_parameters.min_parcel_area:
-                continue
+        # -- Rotate everything back to real coordinates.
+        for p in raw_plots:
+            p["geometry"] = affinity.rotate(p["geometry"], angle, origin=origin)
+        for r in road_records:
+            r["line"] = affinity.rotate(r["line"], angle, origin=origin)
 
-            for plot_polygon in self._subdivide_block(block):
-                vertices = list(plot_polygon.exterior.coords[:-1])
-                bounds = plot_polygon.bounds
+        # -- Number plots and build the coordinate register.
+        plot_start = params.numbering.plot_start
+        raw_plots.sort(key=lambda p: (p["block"], 0 if p["row"] == "bottom" else 1, p["order"]))
 
-                self._parcels.append(ParcelInfo(
-                    id=f"P{parcel_id:04d}",
-                    vertices=vertices,
-                    area=plot_polygon.area,
-                    width=bounds[2] - bounds[0],
-                    depth=bounds[3] - bounds[1],
-                    centroid=(plot_polygon.centroid.x, plot_polygon.centroid.y),
-                    street_frontage=self._find_street_frontage(plot_polygon),
-                    buildable_area=self._calculate_buildable_area(plot_polygon),
-                ))
-                parcel_id += 1
+        new_coordinates: List[CoordinateProps] = []
+        corner_ids: Dict[Point2, str] = {}
+        plots: List[LayoutPlotProps] = []
+        counters: Dict[str, int] = {}
 
-    def _subdivide_block(self, block: Polygon) -> List[Polygon]:
-        """Subdivide a block into rectangular plots according to layout parameters.
+        def register(x: float, y: float, prefix: str, count: List[int]) -> str:
+            key = (round(x, 3), round(y, 3))
+            if key not in corner_ids:
+                count[0] += 1
+                corner_id = f"{prefix} {count[0]}"
+                corner_ids[key] = corner_id
+                self._register[corner_id] = key
+                new_coordinates.append(CoordinateProps(id=corner_id, easting=key[0], northing=key[1]))
+            return corner_ids[key]
 
-        Leftover strips are handled by ``layout_parameters.remainder_strategy``:
-          - 'separate'    -> leftover becomes its own plot (if large enough)
-          - 'add_to_last' -> leftover added to the last plot in the row/column
-          - 'distribute'  -> leftover divided equally among the plots
-        """
-        params = self.layout_parameters
-        parcels: List[Polygon] = []
+        lp_count = [0]
+        for p in raw_plots:
+            block = p["block"]
+            counters[block] = counters.get(block, plot_start - 1) + 1
+            exterior = list(p["geometry"].exterior.coords)[:-1]
+            ids = [register(x, y, "LP", lp_count) for x, y in exterior]
+            plots.append(LayoutPlotProps(
+                block=block,
+                number=counters[block],
+                ids=ids,
+                area=round(p["geometry"].area, 2),
+                use=p["use"],
+            ))
 
-        min_x, min_y, max_x, max_y = block.bounds
-        site_width = max_x - min_x
-        site_height = max_y - min_y
+        rc_count = [0]
+        roads: List[LayoutRoadProps] = []
+        for r in road_records:
+            ids = [register(x, y, "RC", rc_count) for x, y in r["line"].coords]
+            roads.append(LayoutRoadProps(name=r["name"], width=r["width"], centerline_ids=ids))
 
-        target_area = (params.min_parcel_area + params.max_parcel_area) / 2.0
-        plot_width = getattr(params, "plot_width", max(params.min_parcel_width * 1.2, 0.1))
-        plot_depth = getattr(params, "plot_depth", max(target_area / max(plot_width, 0.0001), 0.1))
-
-        min_area = params.min_parcel_area
-        strategy = getattr(params, "remainder_strategy", "separate")
-
-        n_cols = max(1, int(math.floor(site_width / plot_width)))
-        n_rows = max(1, int(math.floor(site_height / plot_depth)))
-
-        def sizes_with_leftover(count: int, size: float, leftover: float, cross_size: float) -> List[float]:
-            """Sizes of the rows/columns after applying the remainder strategy."""
-            sizes = [size] * count
-            if abs(leftover) < 1e-6:
-                return sizes
-            if strategy == "separate":
-                if leftover * cross_size >= min_area:
-                    return sizes + [leftover]
-                sizes[-1] += leftover
-            elif strategy == "add_to_last":
-                sizes[-1] += leftover
-            elif strategy == "distribute":
-                sizes = [size + leftover / count] * count
-            return sizes
-
-        col_widths = sizes_with_leftover(n_cols, plot_width, site_width - n_cols * plot_width, plot_depth)
-        row_heights = sizes_with_leftover(n_rows, plot_depth, site_height - n_rows * plot_depth, plot_width)
-
-        # Tile the block and clip each rectangle to the block polygon
-        EPS = 1e-8
-        y = min_y
-        for h in row_heights:
-            x = min_x
-            for w in col_widths:
-                rect = Polygon([(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
-                inter = rect.intersection(block)
-
-                if inter.geom_type == "Polygon":
-                    if inter.area + EPS >= min_area:
-                        parcels.append(inter)
-                elif inter.geom_type == "MultiPolygon":
-                    parcels.extend(poly for poly in inter.geoms if poly.area + EPS >= min_area)
-                # ignore empty intersections and slivers (points/lines)
-
-                x += w
-            y += h
-
-        # Very small blocks yield no tiles; keep the block itself if big enough
-        if not parcels and block.area >= min_area:
-            parcels = [block]
-
-        return parcels
-
-    def _calculate_buildable_area(self, parcel: Polygon) -> List[Tuple[float, float]]:
-        """Calculate the buildable area within a parcel considering setbacks."""
-        # TODO: apply front/side/rear setbacks per edge instead of a uniform buffer
-        buildable = parcel.buffer(-self.layout_parameters.front_setback)
-
-        if buildable.is_empty or buildable.geom_type != "Polygon":
-            return []
-
-        return list(buildable.exterior.coords[:-1])
-
-    def _find_street_frontage(self, plot: Polygon) -> List[Tuple[float, float]]:
-        """Return the edge of the plot touching a road (longest one wins).
-
-        Falls back to the lowest-Y edge if the plot touches no road.
-        """
-        EPS = 1e-6
-        frontage: List[Tuple[float, float]] = []
-
-        if self._roads_union is not None:
-            max_len = 0.0
-            coords = list(plot.exterior.coords)
-            for i in range(len(coords) - 1):
-                p1, p2 = coords[i], coords[i + 1]
-                edge = LineString([p1, p2])
-                if edge.buffer(EPS).intersects(self._roads_union) and edge.length > max_len:
-                    max_len = edge.length
-                    frontage = [p1, p2]
-
-        if not frontage:
-            coords = list(plot.exterior.coords)
-            min_y = min(c[1] for c in coords)
-            frontage = [c for c in coords if abs(c[1] - min_y) < 0.1]
-
-        return frontage
+        self.plots = plots
+        self.roads = roads
+        self.coordinates = new_coordinates
 
     # ------------------------------------------------------------------
-    # Drawing
+    # Drawing (shared by both modes)
     # ------------------------------------------------------------------
-    def _draw_boundary(self):
-        boundary_points = [(coord.easting, coord.northing) for coord in self.layout_boundary.coordinates]
-        if not boundary_points:
-            return
+    def _plot_points(self, plot: LayoutPlotProps) -> List[Point2]:
+        points = []
+        for pid in plot.ids:
+            if pid not in self._register:
+                raise ValueError(f"Plot '{plot.label()}' references unknown coordinate id '{pid}'")
+            points.append(self._register[pid])
+        return points
 
+    def draw_boundary(self):
+        boundary_points = [(c.easting, c.northing) for c in self.layout_boundary.coordinates]
         self._drawer.add_boundary(boundary_points)
-        orientation = polygon_orientation(boundary_points)
 
+        orientation = polygon_orientation(boundary_points)
         for leg in self.layout_boundary.legs or []:
             self.add_leg_labels(leg, orientation)
-
-    def _draw_roads(self):
-        """Draw roads with centerlines and offset edges."""
-        for road in self._roads:
-            centerline = road["centerline"]
-            width = road["width"]
-
-            self._drawer.add_road_cl(list(centerline))
-
-            road_line = LineString(centerline)
-            for side in ("left", "right"):
-                edge = road_line.parallel_offset(width / 2, side)
-                if not edge.is_empty and edge.geom_type == "LineString":
-                    self._drawer.add_road(list(edge.coords))
-
-    def _draw_parcels(self):
-        """Draw parcels with IDs and area annotations."""
-        for parcel in self._parcels:
-            self._drawer.add_parcel(list(parcel.vertices))
-
-            if parcel.buildable_area:
-                self._drawer.add_buildable(list(parcel.buildable_area))
-
-            self._drawer.add_text(parcel.id, parcel.centroid[0], parcel.centroid[1], 0.5)
-            self._drawer.add_text(f"{parcel.area:.1f} m²",
-                                  parcel.centroid[0], parcel.centroid[1] - 3, 0.5)
-
-    def _draw_green_spaces(self):
-        for green_space in self._green_spaces:
-            if green_space.geom_type == "Polygon":
-                self._drawer.add_greenspace(list(green_space.exterior.coords[:-1]))
 
     def draw_beacons(self):
         seen = set()
@@ -470,29 +415,186 @@ class LayoutPlan(BasePlan):
             self._drawer.draw_beacon(coord.easting, coord.northing, 0,
                                      self.label_size, self._get_drawing_extent(), coord.id)
 
+    def draw_roads(self):
+        for road in self.roads or []:
+            points = [self._register[pid] for pid in road.centerline_ids if pid in self._register]
+            if len(points) < 2:
+                continue
+
+            self._drawer.add_road_cl(points)
+
+            centerline = LineString(points)
+            for side in ("left", "right"):
+                edge = centerline.parallel_offset(road.width / 2, side)
+                edge = edge.intersection(self._boundary_polygon)
+                segments = [edge] if edge.geom_type == "LineString" else \
+                    [g for g in getattr(edge, "geoms", []) if g.geom_type == "LineString"]
+                for segment in segments:
+                    if not segment.is_empty:
+                        self._drawer.add_road(list(segment.coords))
+
+            if road.name:
+                mid = centerline.interpolate(0.5, normalized=True)
+                (x1, y1), (x2, y2) = points[0], points[-1]
+                text_angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+                if text_angle > 90 or text_angle < -90:
+                    text_angle += 180
+                height = min(self.label_size, road.width * 0.4)
+                self._drawer.add_label(road.name, mid.x, mid.y,
+                                       angle=text_angle, height=height)
+
+    def draw_plots(self):
+        for plot in self.plots or []:
+            points = self._plot_points(plot)
+            polygon = Polygon(points)
+            cx, cy = polygon.centroid.x, polygon.centroid.y
+
+            # Labels must fit inside their own plot regardless of site size
+            size = math.sqrt(max(polygon.area, 1.0))
+            number_height = min(self.label_size, size * 0.15)
+            use_height = min(self.label_size, size * 0.09)
+
+            if plot.use in OPEN_USES:
+                self._drawer.add_greenspace(points)
+                self._drawer.add_text("OPEN SPACE", cx, cy, use_height,
+                                      alignment=TextEntityAlignment.MIDDLE_CENTER)
+                continue
+
+            self._drawer.add_parcel(points)
+            if plot.use not in ("residential", "commercial"):
+                self._drawer.add_text(str(plot.use).upper(), cx, cy, use_height,
+                                      alignment=TextEntityAlignment.MIDDLE_CENTER)
+            else:
+                self._drawer.add_text(str(plot.number), cx, cy, number_height,
+                                      alignment=TextEntityAlignment.MIDDLE_CENTER)
+
+    def draw_block_labels(self):
+        if not self.plots:
+            return
+
+        blocks: Dict[str, List[Polygon]] = {}
+        for plot in self.plots:
+            if plot.block:
+                blocks.setdefault(plot.block, []).append(Polygon(self._plot_points(plot)))
+
+        for block, polygons in blocks.items():
+            union = unary_union(polygons)
+            height = min(self.label_size * 1.6, math.sqrt(max(union.area, 1.0)) * 0.07)
+            self._drawer.add_text(f"BLOCK {block}", union.centroid.x, union.centroid.y,
+                                  height, alignment=TextEntityAlignment.MIDDLE_CENTER)
+
+    # ------------------------------------------------------------------
+    # Area schedule
+    # ------------------------------------------------------------------
+    def _area_schedule(self) -> List[List[str]]:
+        total_area = self._boundary_polygon.area
+        by_use: Dict[str, Tuple[int, float]] = {}
+        plots_area = 0.0
+
+        for plot in self.plots or []:
+            area = plot.area if plot.area is not None else Polygon(self._plot_points(plot)).area
+            count, use_area = by_use.get(plot.use, (0, 0.0))
+            by_use[plot.use] = (count + 1, use_area + area)
+            plots_area += area
+
+        rows = [["LAND USE", "PLOTS", "AREA (SQ.M)", "%"]]
+        for use in sorted(by_use, key=lambda u: -by_use[u][1]):
+            count, area = by_use[use]
+            rows.append([
+                use.replace("_", " ").upper(),
+                str(count),
+                f"{area:,.0f}",
+                f"{area / total_area * 100:.1f}",
+            ])
+
+        circulation = max(total_area - plots_area, 0.0)
+        rows.append(["ROADS / CIRCULATION", "-", f"{circulation:,.0f}",
+                     f"{circulation / total_area * 100:.1f}"])
+        rows.append(["TOTAL", str(len(self.plots or [])), f"{total_area:,.0f}", "100.0"])
+        return rows
+
+    def draw_schedule(self):
+        if not self.plots:
+            return
+
+        rows = self._area_schedule()
+        frame_left, frame_bottom, frame_right, frame_top = self._frame_coords
+        min_x, min_y, max_x, max_y = self._bounding_box
+
+        text_height = self.label_size
+        row_height = text_height * 2.2
+        # Generous per-character estimate so text never spills over its cell
+        char_w = text_height * 0.95
+        col_widths = [
+            max(len(str(r[0])) for r in rows) * char_w + 2 * char_w,
+            max(len(str(r[1])) for r in rows) * char_w + 2 * char_w,
+            max(len(str(r[2])) for r in rows) * char_w + 2 * char_w,
+            max(len(str(r[3])) for r in rows) * char_w + 2 * char_w,
+        ]
+
+        # Place the table below the drawing, left-aligned with the site —
+        # the frame's bottom margin is always deep enough, so the table can
+        # never overlap the plots regardless of the computed text sizes.
+        x = min_x
+        y = min_y - row_height
+        self._drawer.draw_table(x, y, rows, col_widths, row_height, text_height)
+
+    # ------------------------------------------------------------------
+    # Setting-out CSV
+    # ------------------------------------------------------------------
+    def build_setting_out_csv(self) -> str:
+        """CSV of every beacon a surveyor must set out: boundary beacons,
+        plot corners, and road centerline points."""
+        descriptions: Dict[str, str] = {}
+
+        for coord in self.layout_boundary.coordinates:
+            descriptions.setdefault(coord.id, "Boundary beacon")
+
+        for plot in self.plots or []:
+            for pid in plot.ids:
+                if pid in descriptions:
+                    if "Boundary" not in descriptions[pid] and plot.label() not in descriptions[pid]:
+                        descriptions[pid] += f" / {plot.label()}"
+                else:
+                    descriptions[pid] = plot.label()
+
+        for road in self.roads or []:
+            for pid in road.centerline_ids:
+                descriptions.setdefault(pid, f"{road.name} centerline".strip())
+
+        lines = ["ID,NORTHING,EASTING,DESCRIPTION"]
+        for pid, description in descriptions.items():
+            if pid not in self._register:
+                continue
+            easting, northing = self._register[pid]
+            safe = description.replace('"', "'")
+            lines.append(f'{pid},{northing:.3f},{easting:.3f},"{safe}"')
+
+        return "\n".join(lines) + "\n"
+
+    # ------------------------------------------------------------------
+    # Entry points
+    # ------------------------------------------------------------------
     def draw(self):
-        # Generate the road network for the requested subdivision pattern
-        generators = {
-            "grid": self._generate_grid_roads,
-            "radial": self._generate_radial_roads,
-            "organic": self._generate_organic_roads,
-            "mixed": self._generate_mixed_roads,
-        }
-        generators.get(self.layout_parameters.subdivision_type, self._generate_mixed_roads)()
+        self._ensure_boundary_computations()
 
-        self._generate_blocks()
+        if not self.plots:
+            self._generate_layout()
 
-        if self.layout_parameters.include_green_spaces:
-            self._allocate_green_spaces()
-
-        self._generate_parcels()
-
-        # Draw all elements
-        self._draw_boundary()
-        self._draw_roads()
-        self._draw_parcels()
+        self.draw_boundary()
+        self.draw_roads()
+        self.draw_plots()
+        self.draw_block_labels()
+        self.draw_schedule()
         self.draw_frames()
         self.draw_title_block()
         self.draw_footer_boxes()
         self.draw_north_arrow()
         self.draw_beacons()
+
+    def save(self) -> str:
+        return self._drawer.save(
+            paper_size=self.page_size,
+            orientation=self.page_orientation,
+            extra_files={"setting_out_coordinates.csv": self.build_setting_out_csv()},
+        )

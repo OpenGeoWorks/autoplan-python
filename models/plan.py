@@ -105,38 +105,69 @@ class LayoutBoundaryProps(BaseModel):
     legs: Optional[List[TraverseLegProps]] = []
 
 
+class LayoutPlotProps(BaseModel):
+    """A single plot in a layout: corner beacon ids referencing the plan's
+    coordinate register, in polygon order."""
+    block: str = ""
+    number: Union[int, str] = ""
+    ids: List[str] = []
+    area: Optional[float] = None
+    use: str = "residential"  # residential | commercial | open_space | <facility>
+
+    def label(self) -> str:
+        if self.block:
+            return f"Block {self.block} Plot {self.number}"
+        return f"Plot {self.number}"
+
+
+class LayoutRoadProps(BaseModel):
+    """A road defined by centerline beacon ids in the coordinate register."""
+    name: str = ""
+    width: float = 9.0
+    centerline_ids: List[str] = []
+
+
+class LayoutPlotParams(BaseModel):
+    """Standard plot module, quoted as frontage x depth (15 x 30 = 450 sqm)."""
+    frontage: float = 15.0  # meters along the road
+    depth: float = 30.0  # meters
+    min_area: float = 400.0  # drop edge remainders smaller than this
+    remainder_strategy: str = "add_to_last"  # add_to_last | separate | distribute
+
+
+class LayoutRoadParams(BaseModel):
+    major_width: float = 15.0  # spine road right-of-way
+    collector_width: float = 12.0
+    access_width: float = 9.0
+    corner_radius: float = 6.0
+    major_road_name: str = ""
+
+
+class LayoutBlockParams(BaseModel):
+    double_loaded: bool = True  # two plot rows back-to-back per block
+    max_length: float = 180.0  # block length before a cross street
+    orientation: str = "auto"  # auto | ns | ew
+
+
+class LayoutReserveParams(BaseModel):
+    open_space_percent: float = 10.0
+    commercial_along_major: bool = True
+    facilities: List[str] = []  # e.g. ["school", "market"]
+
+
+class LayoutNumberingParams(BaseModel):
+    scheme: str = "block_plot"  # Block A Plot 1 ...
+    block_labels: str = "alphabetic"
+    plot_start: int = 1
+
+
 class LayoutParameters(BaseModel):
-    """Parameters for layout generation"""
-    # Road parameters
-    main_road_width: float = 15.0  # meters
-    secondary_road_width: float = 12.0  # meters
-    access_road_width: float = 9.0  # meters
-
-    # Parcel parameters
-    min_parcel_area: float = 450.0  # square meters
-    max_parcel_area: float = 1000.0  # square meters
-    min_parcel_width: float = 15.0  # meters
-    min_parcel_depth: float = 25.0  # meters
-    target_parcel_ratio: float = 1.5  # depth/width ratio
-
-    # Subdivision parameters
-    subdivision_type: str = "grid"  # "grid", "radial", "organic", "mixed"
-    road_hierarchy: bool = True
-    include_cul_de_sacs: bool = True
-    include_green_spaces: bool = True
-    green_space_percentage: float = 10.0  # percentage of total area
-
-    # Setbacks
-    front_setback: float = 6.0  # meters
-    side_setback: float = 3.0  # meters
-    rear_setback: float = 3.0  # meters
-
-    # Corner radius for road intersections
-    corner_radius: float = 5.0  # meters
-
-    # Block parameters
-    max_block_length: float = 200.0  # meters
-    max_block_width: float = 100.0  # meters
+    """Design parameters for auto-generating a subdivision layout."""
+    plot: LayoutPlotParams = Field(default_factory=LayoutPlotParams)
+    roads: LayoutRoadParams = Field(default_factory=LayoutRoadParams)
+    blocks: LayoutBlockParams = Field(default_factory=LayoutBlockParams)
+    reserves: LayoutReserveParams = Field(default_factory=LayoutReserveParams)
+    numbering: LayoutNumberingParams = Field(default_factory=LayoutNumberingParams)
 
 
 class LongitudinalProfileParameters(BaseModel):
@@ -146,6 +177,17 @@ class LongitudinalProfileParameters(BaseModel):
     station_interval: float = 10.0  # metres
     elevation_interval: float = 1.0
     starting_chainage: float = 0.0
+
+
+class RouteParameters(BaseModel):
+    """Plan-view (horizontal alignment) settings for route surveys.
+
+    The plan view is drawn when the payload carries station coordinates
+    (``coordinates`` entries whose ids match the ``elevations`` ids).
+    """
+    right_of_way_width: float = 30.0  # metres, total corridor width
+    show_plan_view: bool = True
+    show_chainage_labels: bool = True
 
 
 # ---------- Main Plan Model ----------
@@ -179,8 +221,11 @@ class PlanProps(BaseModel):
     topographic_setting: TopographicSettingProps = Field(default_factory=TopographicSettingProps)
     topographic_boundary: Optional[TopographicBoundaryProps] = None
     layout_boundary: Optional[LayoutBoundaryProps] = None
-    layout_parameters: Optional[LayoutParameters] = None
+    layout_parameters: LayoutParameters = Field(default_factory=LayoutParameters)
+    plots: Optional[List[LayoutPlotProps]] = None
+    roads: Optional[List[LayoutRoadProps]] = None
     longitudinal_profile_parameters: Optional[LongitudinalProfileParameters] = None
+    route_parameters: RouteParameters = Field(default_factory=RouteParameters)
     footers: List[str] = []
     footer_size: float = 0.5
     dxf_version: str = "R2000"

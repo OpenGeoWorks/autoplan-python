@@ -19,6 +19,9 @@ from pydantic import ValidationError
 from plans import CadastralPlan, LayoutPlan, RoutePlan, TopographicPlan
 
 logging.basicConfig(level=logging.INFO)
+# ezdxf logs an INFO line for every entity on a hidden layer (e.g. the TIN
+# mesh when show_mesh is off) — hundreds of lines per render. Warnings only.
+logging.getLogger("ezdxf").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 

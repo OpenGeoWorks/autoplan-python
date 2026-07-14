@@ -8,6 +8,8 @@ block, footer boxes, north arrow, and bearing/distance leg labels.
 import math
 from typing import ClassVar, Optional
 
+from ezdxf.enums import TextEntityAlignment
+
 from dxf_manager import SurveyDXFManager
 from models.plan import CoordinateProps, PlanProps, PlanType, TraverseLegProps
 from utils import format_number, html_to_mtext, line_direction, line_normals
@@ -113,6 +115,16 @@ class BasePlan(PlanProps):
             area=self._area_text(),
             origin=self._origin_text(),
         )
+
+        if self.plan_number:
+            frame_height = frame_top - frame_bottom
+            self._drawer.add_label(
+                f"PLAN No:- {self.plan_number.upper()}",
+                frame_right - frame_width * 0.02,
+                frame_top - frame_height * 0.02,
+                height=self.label_size * 1.3,
+                alignment=TextEntityAlignment.TOP_RIGHT,
+            )
 
     def draw_footer_boxes(self):
         if not self.footers:
@@ -225,7 +237,7 @@ class BasePlan(PlanProps):
 
         self._drawer.add_north_arrow_label(
             (coord.easting, northing_label_y), (coord.easting, northing_label_y + height),
-            f"{coord.northing}mN", self.label_size, "vertical",
+            f"{coord.northing}mN", self.label_size,
         )
         self._drawer.draw_north_arrow_cross(coord.easting, coord.northing, self.beacon_size * 3)
 

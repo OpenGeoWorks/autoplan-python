@@ -66,6 +66,9 @@ class SurveyDXFManager:
         self.doc.header["$AUNITS"] = 1  # degrees/minutes/seconds
         self.doc.header["$AUPREC"] = 3  # 0d00'00"
         self.doc.header["$ANGBASE"] = 90.0  # 0 degrees points North
+        # Absolute point display size; the default (0 = relative to viewport)
+        # is unsupported by the PDF renderer and triggers a log warning.
+        self.doc.header["$PDSIZE"] = 1.0
 
     # ------------------------------------------------------------------
     # Layer / style setup
@@ -113,6 +116,10 @@ class SurveyDXFManager:
         self.doc.layers.add(name="F-GRID", color=colors.YELLOW, linetype="DASHDOT")
         self.doc.layers.add(name="TEXT", color=colors.BLUE)
         self.doc.layers.add(name="PROFILE", color=colors.RED)
+        # plan view (horizontal alignment)
+        self.doc.layers.add(name="ALIGNMENT", color=colors.RED, linetype="DASHDOT", lineweight=35)
+        self.doc.layers.add(name="ROW", color=colors.BLACK, linetype="DASHED", lineweight=18)
+        self.doc.layers.add(name="STATIONS", color=colors.BLUE, lineweight=13)
 
     def setup_font(self, font_name: str = "Times New Roman"):
         self.doc.styles.add("SURVEY_TEXT", font=f"{font_name}.ttf")
@@ -185,6 +192,11 @@ class SurveyDXFManager:
         points = [(x * self.scale, y * self.scale) for x, y, *_ in points]
         self.msp.add_lwpolyline(points, dxfattribs={"layer": "ROADS"})
 
+    def add_polyline(self, points: List[Tuple[float, float]], layer: str, close: bool = False):
+        """Add a generic 2D polyline on the given layer."""
+        points = [(x * self.scale, y * self.scale) for x, y, *_ in points]
+        self.msp.add_lwpolyline(points, close=close, dxfattribs={"layer": layer})
+
     def add_greenspace(self, points: List[Tuple[float, float]]):
         points = [(x * self.scale, y * self.scale) for x, y, *_ in points]
         self.msp.add_lwpolyline(points, close=True, dxfattribs={"layer": "GREEN_SPACE"})
@@ -193,8 +205,9 @@ class SurveyDXFManager:
         hatch.set_pattern_fill("ANSI31", scale=0.5)
         hatch.paths.add_polyline_path(points, is_closed=True)
 
-    def add_label(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0):
-        """Add centered single-line text on the LABELS layer."""
+    def add_label(self, text: str, x: float, y: float, angle: float = 0.0, height: float = 1.0,
+                  alignment=TextEntityAlignment.MIDDLE_CENTER):
+        """Add single-line text on the LABELS layer (centered by default)."""
         x, y = x * self.scale, y * self.scale
         height = height * self.scale
 
@@ -206,7 +219,7 @@ class SurveyDXFManager:
                 "style": "SURVEY_TEXT",
                 "rotation": angle,
             },
-        ).set_placement((x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+        ).set_placement((x, y), align=alignment)
 
     def add_text(self, text: str, x: float, y: float, height: float = 1.0,
                  rotation: float = 0.0, alignment=TextEntityAlignment.TOP_LEFT):
@@ -227,7 +240,9 @@ class SurveyDXFManager:
     # ------------------------------------------------------------------
     # North arrow
     # ------------------------------------------------------------------
-    def draw_north_arrow(self, x: float, y: float, height: float = 100.0):
+    def draw_north_arrow(self, x: float, y: float, height: float = 100.0, rotation: float = 0.0):
+        """Draw the north arrow; ``rotation`` (CCW degrees) supports rotated
+        plan views where sheet-up is not true north."""
         height = height * self.scale
         x, y = x * self.scale, y * self.scale
 
@@ -252,27 +267,36 @@ class SurveyDXFManager:
             ).set_placement((height * 0.2, height - (height * 0.2)),
                             align=TextEntityAlignment.MIDDLE_CENTER)
 
-        self.msp.add_blockref("NORTH_ARROW", (x, y))
+        self.msp.add_blockref("NORTH_ARROW", (x, y), dxfattribs={"rotation": rotation})
 
     def add_north_arrow_label(self, start: Tuple[float, float], stop: Tuple[float, float],
-                              label: str = "", height: float = 100.0, orientation: str = "horizontal"):
+                              label: str = "", height: float = 100.0):
+        """Draw a grid reference line with its label sitting just clear of it,
+        offset perpendicular to the line by a fraction of the text height."""
         height = height * self.scale
         x, y = start[0] * self.scale, start[1] * self.scale
         stop_x, stop_y = stop[0] * self.scale, stop[1] * self.scale
 
         self.msp.add_line((x, y), (stop_x, stop_y), dxfattribs={"color": 5})
 
-        placement_x = x + 1
-        placement_y = y + 1
-        if orientation == "vertical":
-            placement_x = x - 1
-
         if label:
-            angle = math.degrees(math.atan2(stop_y - y, stop_x - x))
+            angle = math.atan2(stop_y - y, stop_x - x)
+            ux, uy = math.cos(angle), math.sin(angle)  # along the line
+            nx, ny = -uy, ux  # perpendicular (left of direction)
+
+            placement = (
+                x + ux * (height * 0.5) + nx * (height * 0.35),
+                y + uy * (height * 0.5) + ny * (height * 0.35),
+            )
             self.msp.add_text(
                 label,
-                dxfattribs={"height": height, "color": 5, "style": "SURVEY_TEXT", "rotation": angle},
-            ).set_placement((placement_x, placement_y), align=TextEntityAlignment.TOP_LEFT)
+                dxfattribs={
+                    "height": height,
+                    "color": 5,
+                    "style": "SURVEY_TEXT",
+                    "rotation": math.degrees(angle),
+                },
+            ).set_placement(placement, align=TextEntityAlignment.BOTTOM_LEFT)
 
     def draw_north_arrow_cross(self, x: float, y: float, length: float = 100.0):
         x, y = x * self.scale, y * self.scale
@@ -379,8 +403,12 @@ class SurveyDXFManager:
         title_min_x = title_box.extmin.x
         title_max_x = title_box.extmax.x
 
-        title_length = title_max_x - title_min_x
-        graphical_x = title_min_x + ((title_length / 2) - (graphical_scale_length / 2))
+        # draw_graphical_scale snaps the bar to a nice round interval, so
+        # center using the length that will actually be drawn.
+        graphical_scale_length = nice_round((graphical_scale_length / self.scale) / 5) * 5 * self.scale
+
+        title_center_x = (title_min_x + title_max_x) / 2
+        graphical_x = title_center_x - (graphical_scale_length / 2)
 
         # graphical scale below the title
         graphical_ref = self.draw_graphical_scale(
@@ -413,10 +441,31 @@ class SurveyDXFManager:
     # Frames & footers
     # ------------------------------------------------------------------
     def draw_footer_box(self, text: str, min_x, min_y, max_x, max_y, font_size: float = 1.0):
-        """Draw a footer rectangle with MText content inside."""
+        """Draw a footer rectangle with MText content inside.
+
+        The text height is clamped so the estimated number of wrapped lines
+        always fits inside the box instead of overflowing across the frame.
+        """
         font_size = font_size * self.scale
         min_x, min_y = min_x * self.scale, min_y * self.scale
         max_x, max_y = max_x * self.scale, max_y * self.scale
+
+        box_width = max_x - min_x
+        box_height = max_y - min_y
+
+        # Estimate wrapped line count from the plain text and shrink the
+        # font until it fits (line spacing ~1.67x char height in MText).
+        segments = text.split(MTextEditor.NEW_LINE)
+        plain = [re.sub(r"\\f[^;]*;|\\[A-Za-z]|[{}]", "", seg) for seg in segments]
+        height = font_size
+        for _ in range(4):
+            capacity = max((box_width * 0.9) / (0.55 * height), 1.0)
+            lines = sum(max(1, math.ceil(len(seg) / capacity)) for seg in plain)
+            needed = lines * height * 1.67
+            allowed = box_height * 0.85
+            if needed <= allowed:
+                break
+            height *= allowed / needed
 
         self.msp.add_lwpolyline(
             [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)],
@@ -428,10 +477,10 @@ class SurveyDXFManager:
             dxfattribs={"layer": "FOOTER", "style": "SURVEY_TEXT"},
         )
         footer_mtext.dxf.attachment_point = ezdxf.enums.MTextEntityAlignment.TOP_LEFT
-        footer_mtext.dxf.width = (max_x - min_x) * 0.9
-        footer_mtext.dxf.char_height = font_size
+        footer_mtext.dxf.width = box_width * 0.9
+        footer_mtext.dxf.char_height = height
         # top-left corner with some padding
-        footer_mtext.set_location((min_x + (0.05 * (max_x - min_x)), max_y - (0.1 * (max_y - min_y))))
+        footer_mtext.set_location((min_x + (0.05 * box_width), max_y - (0.1 * box_height)))
 
     def draw_frame(self, min_x, min_y, max_x, max_y):
         """Draw a rectangular frame given min and max coordinates."""
@@ -442,6 +491,55 @@ class SurveyDXFManager:
             [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)],
             close=True, dxfattribs={"layer": "FRAME"},
         )
+
+    def draw_table(self, x: float, y: float, rows: List[List[str]],
+                   col_widths: List[float], row_height: float,
+                   text_height: float = 1.0, layer: str = "TEXT"):
+        """Draw a simple grid table with (x, y) as its top-left corner.
+
+        ``rows`` is a list of rows; each row is a list of cell strings.
+        ``col_widths`` and ``row_height`` are in model units.
+        """
+        x, y = x * self.scale, y * self.scale
+        col_widths = [w * self.scale for w in col_widths]
+        row_height = row_height * self.scale
+        text_height = text_height * self.scale
+
+        table_width = sum(col_widths)
+        table_height = row_height * len(rows)
+
+        # outer border
+        self.msp.add_lwpolyline(
+            [(x, y), (x + table_width, y), (x + table_width, y - table_height), (x, y - table_height)],
+            close=True, dxfattribs={"layer": layer},
+        )
+
+        # horizontal lines
+        for i in range(1, len(rows)):
+            line_y = y - i * row_height
+            self.msp.add_line((x, line_y), (x + table_width, line_y), dxfattribs={"layer": layer})
+
+        # vertical lines
+        cx = x
+        for width in col_widths[:-1]:
+            cx += width
+            self.msp.add_line((cx, y), (cx, y - table_height), dxfattribs={"layer": layer})
+
+        # cell text (left-aligned, vertically centered)
+        padding = text_height * 0.4
+        for i, row in enumerate(rows):
+            cell_x = x
+            cell_y = y - (i + 0.5) * row_height
+            for j, cell in enumerate(row):
+                self.msp.add_text(
+                    str(cell),
+                    dxfattribs={
+                        "layer": layer,
+                        "height": text_height,
+                        "style": "SURVEY_TEXT",
+                    },
+                ).set_placement((cell_x + padding, cell_y), align=TextEntityAlignment.MIDDLE_LEFT)
+                cell_x += col_widths[j]
 
     # ------------------------------------------------------------------
     # Topographic primitives
@@ -576,9 +674,12 @@ class SurveyDXFManager:
             filepath = f"{self.get_filename()}.dwg"
         odafc.convert(dxf_filepath, filepath, version=self.dxf_version)
 
-    def save(self, paper_size: str = "A4", orientation: str = "portrait") -> str:
+    def save(self, paper_size: str = "A4", orientation: str = "portrait",
+             extra_files: Optional[dict] = None) -> str:
         """Export DXF + DWG + PDF, zip them, and upload the archive.
 
+        ``extra_files`` maps file names to text content and is bundled into
+        the ZIP as well (e.g. setting-out coordinate CSVs).
         Returns the public URL of the uploaded ZIP archive.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -596,6 +697,8 @@ class SurveyDXFManager:
                 zipf.write(dxf_path, os.path.basename(dxf_path))
                 zipf.write(dwg_path, os.path.basename(dwg_path))
                 zipf.write(pdf_path, os.path.basename(pdf_path))
+                for name, content in (extra_files or {}).items():
+                    zipf.writestr(name, content)
 
             url = upload_file(zip_path, folder="survey_plans", file_name=filename)
             if url is None:

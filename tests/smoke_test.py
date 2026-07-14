@@ -100,11 +100,21 @@ def topographic_payload():
 
 
 def route_payload():
+    # A gently curving route heading roughly north-east, 20 m stations
+    coordinates = []
+    e, n, heading = 543100.0, 712000.0, math.radians(35)
+    for i in range(15):
+        coordinates.append({"id": f"CH{i}", "easting": round(e, 3), "northing": round(n, 3)})
+        heading += math.radians(2.5)  # slight right-hand curvature
+        e += 20 * math.cos(heading)
+        n += 20 * math.sin(heading)
+
     return BASE | {
         "type": "route",
         "name": "smoke route",
+        "coordinates": coordinates,
         "elevations": [
-            {"chainage": f"0+{i * 20:03d}", "elevation": round(100 + 4 * math.sin(i / 3), 2)}
+            {"id": f"CH{i}", "chainage": f"0+{i * 20:03d}", "elevation": round(100 + 4 * math.sin(i / 3), 2)}
             for i in range(15)
         ],
         "longitudinal_profile_parameters": {
@@ -114,6 +124,10 @@ def route_payload():
             "station_interval": 20.0,
             "elevation_interval": 1.0,
             "starting_chainage": 0.0,
+        },
+        "route_parameters": {
+            "right_of_way_width": 30.0,
+            "show_plan_view": True,
         },
     }
 
@@ -133,7 +147,11 @@ def layout_payload():
             "area": 120000.0,
             "legs": [leg(boundary[i], boundary[(i + 1) % 4]) for i in range(4)],
         },
-        "layout_parameters": {"subdivision_type": "grid"},
+        "layout_parameters": {
+            "plot": {"frontage": 15.0, "depth": 30.0},
+            "roads": {"major_road_name": "Main Avenue"},
+            "reserves": {"open_space_percent": 10.0, "facilities": ["school"]},
+        },
     }
 
 
