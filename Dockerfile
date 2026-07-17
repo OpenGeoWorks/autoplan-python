@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     xvfb \
     libc6 \
     libfontconfig1 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Download ODA File Converter AppImage (replace with the latest version)

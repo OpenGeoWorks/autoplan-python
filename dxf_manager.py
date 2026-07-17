@@ -21,11 +21,21 @@ from ezdxf import bbox, colors
 from ezdxf.addons import odafc
 from ezdxf.addons.drawing import Frontend, RenderContext, config, layout, pymupdf
 from ezdxf.enums import TextEntityAlignment
+from ezdxf.fonts import fonts as ezfonts
 from ezdxf.tools.text import MTextEditor
 
 from upload import upload_file
 
 logger = logging.getLogger(__name__)
+
+# Metric-compatible substitutes used to *measure* text when the style's real
+# font is not installed (e.g. in the Docker container). The DXF still names
+# the original font; only the width/height estimates use the substitute.
+MEASUREMENT_FONT_SUBSTITUTES = {
+    "times new roman": "LiberationSerif-Regular.ttf",
+    "arial": "LiberationSans-Regular.ttf",
+    "courier new": "LiberationMono-Regular.ttf",
+}
 
 # Paper sizes in mm (width, height) for portrait orientation.
 PAPER_SIZES = {
@@ -636,6 +646,89 @@ class SurveyDXFManager:
         else:
             layer_entity.off()
 
+    def _measurement_font(self, font_name: str, cap_height: float):
+        """Font used to estimate text extents, cached per (font, height).
+
+        Falls back to a metric-compatible substitute when the style's font is
+        not installed, so estimated widths stay close to what CAD software
+        with the real font will render.
+        """
+        cache = getattr(self, "_font_cache", None)
+        if cache is None:
+            cache = self._font_cache = {}
+        key = (font_name, round(cap_height, 9))
+        font = cache.get(key)
+        if font is None:
+            name = font_name
+            face = ezfonts.font_manager.get_font_face(name)
+            stem = os.path.splitext(os.path.basename(font_name))[0].lower()
+            if face is not None and stem not in face.family.lower():
+                substitute = MEASUREMENT_FONT_SUBSTITUTES.get(stem)
+                if substitute is not None:
+                    sub_face = ezfonts.font_manager.get_font_face(substitute)
+                    if sub_face is not None and "liberation" in sub_face.family.lower():
+                        name = substitute
+            font = cache[key] = ezfonts.make_font(name, cap_height)
+        return font
+
+    def fix_justified_text_insert_points(self):
+        """Recompute the baseline-left insertion point of justified TEXT.
+
+        AutoCAD draws DWG TEXT glyphs starting at the insertion point
+        (group 10) and keeps the alignment point (group 11) as editing
+        metadata, while the ODA converter copies both points through
+        unchanged. ezdxf leaves the insertion point equal to the alignment
+        point (the DXF reference allows this because DXF readers must use
+        the alignment point), so every centered/right/top justified label
+        rendered as left/baseline justified once converted to DWG.
+        """
+        spaces = [self.msp] + [block for block in self.doc.blocks]
+        for space in spaces:
+            for text in space.query("TEXT"):
+                halign = text.dxf.halign
+                valign = text.dxf.valign
+                if (halign == 0 and valign == 0) or halign in (3, 5):
+                    # baseline-left already, or ALIGNED/FIT dual-point modes
+                    continue
+                if not text.dxf.hasattr("align_point"):
+                    continue
+
+                style_name = text.dxf.style
+                font_file = "txt"
+                if style_name in self.doc.styles:
+                    font_file = self.doc.styles.get(style_name).dxf.font or "txt"
+                cap_height = text.dxf.height
+                font = self._measurement_font(font_file, cap_height)
+
+                width = font.text_width(text.dxf.text) * text.dxf.width
+                m = font.measurements
+
+                dx = 0.0
+                if halign in (1, 4):  # center / middle
+                    dx = -width / 2
+                elif halign == 2:  # right
+                    dx = -width
+
+                if halign == 4:  # MIDDLE: centered on the full glyph extent
+                    dy = (m.descender_height - m.cap_height) / 2
+                elif valign == 1:  # bottom (descender line)
+                    dy = m.descender_height
+                elif valign == 2:  # middle of capitals
+                    dy = -m.cap_height / 2
+                elif valign == 3:  # top of capitals
+                    dy = -m.cap_height
+                else:  # baseline
+                    dy = 0.0
+
+                rot = math.radians(text.dxf.rotation)
+                cos_r, sin_r = math.cos(rot), math.sin(rot)
+                align = text.dxf.align_point
+                text.dxf.insert = (
+                    align.x + dx * cos_r - dy * sin_r,
+                    align.y + dx * sin_r + dy * cos_r,
+                    align.z,
+                )
+
     def get_filename(self) -> str:
         plan_name = self.plan_name.lower()
         plan_name = re.sub(r"\s+", "_", plan_name)
@@ -646,6 +739,7 @@ class SurveyDXFManager:
     def save_dxf(self, filepath: Optional[str] = None):
         if not filepath:
             filepath = f"{self.get_filename()}.dxf"
+        self.fix_justified_text_insert_points()
         self.doc.saveas(filepath)
 
     def save_pdf(self, filepath: Optional[str] = None, paper_size: str = "A4", orientation: str = "portrait"):
