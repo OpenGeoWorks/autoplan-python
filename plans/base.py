@@ -12,7 +12,7 @@ from ezdxf.enums import TextEntityAlignment
 
 from dxf_manager import PAPER_SIZES, SurveyDXFManager
 from models.plan import CoordinateProps, PlanProps, PlanType, TraverseLegProps
-from utils import format_number, html_to_mtext, line_direction, line_normals
+from utils import format_number, html_to_mtext, line_normals, readable_angle
 
 # Margins around the data bounding box, as a fraction of its larger side.
 FRAME_X_PERCENT = 0.9
@@ -148,29 +148,44 @@ class BasePlan(PlanProps):
             origin=self._origin_text(),
         )
 
-        if self.plan_number:
-            frame_height = frame_top - frame_bottom
-            self._drawer.add_label(
-                f"PLAN No:- {self.plan_number.upper()}",
-                frame_right - frame_width * 0.02,
-                frame_top - frame_height * 0.02,
-                height=self.label_size * 1.3,
-                alignment=TextEntityAlignment.TOP_RIGHT,
-            )
+    def _effective_footers(self) -> list:
+        """Footer texts to draw; a plan number forces at least two boxes so
+        it always has a box to sit in (empty boxes are drawn without text)."""
+        footers = list(self.footers or [])
+        if self.plan_number and len(footers) < 2:
+            footers += [""] * (2 - len(footers))
+        return footers
 
     def draw_footer_boxes(self):
-        if not self.footers:
+        footers = self._effective_footers()
+        if not footers:
             return
 
         x_min, y_min, x_max, y_max = self._frame_coords
-        box_width = (x_max - x_min) / len(self.footers)
+        box_width = (x_max - x_min) / len(footers)
         box_height = (y_max - y_min) * FOOTER_HEIGHT_PERCENT
 
-        for i, footer in enumerate(self.footers):
+        for i, footer in enumerate(footers):
             x1 = x_min + i * box_width
+            top_inset = 0.0
+
+            # Plan number sits at the top left of the rightmost footer box;
+            # that box's own text starts below it.
+            if self.plan_number and i == len(footers) - 1:
+                plan_no_height = self.label_size * 1.3
+                self._drawer.add_label(
+                    f"PLAN No:- {self.plan_number.upper()}",
+                    x1 + box_width * 0.05,
+                    y_min + box_height * 0.9,
+                    height=plan_no_height,
+                    alignment=TextEntityAlignment.TOP_LEFT,
+                )
+                top_inset = plan_no_height * 1.8
+
             self._drawer.draw_footer_box(
                 html_to_mtext(footer, font=self.font),
                 x1, y_min, x1 + box_width, y_min + box_height, self.footer_size,
+                top_inset=top_inset,
             )
 
     def add_leg_labels(self, leg: TraverseLegProps, orientation: str):
@@ -182,12 +197,8 @@ class BasePlan(PlanProps):
 
         angle_deg = math.degrees(math.atan2(dy, dx))
 
-        # Positions along the leg: bearing degrees at 20%, minutes at 80%,
-        # distance at the midpoint.
-        first_x = leg.from_.easting + 0.2 * dx
-        first_y = leg.from_.northing + 0.2 * dy
-        last_x = leg.from_.easting + 0.8 * dx
-        last_y = leg.from_.northing + 0.8 * dy
+        # Both labels sit at the leg midpoint: distance inside the polygon,
+        # bearing outside.
         mid_x = (leg.from_.easting + leg.to.easting) / 2
         mid_y = (leg.from_.northing + leg.to.northing) / 2
 
@@ -203,17 +214,14 @@ class BasePlan(PlanProps):
         inside = (inside[0] / length * offset_distance, inside[1] / length * offset_distance)
         outside = (outside[0] / length * offset_distance, outside[1] / length * offset_distance)
 
-        first_x += outside[0]
-        first_y += outside[1]
-        last_x += outside[0]
-        last_y += outside[1]
+        bearing_x = mid_x + outside[0]
+        bearing_y = mid_y + outside[1]
         mid_x += inside[0]
         mid_y += inside[1]
 
-        # Keep text upright
-        text_angle = angle_deg
-        if text_angle > 90 or text_angle < -90:
-            text_angle += 180
+        # Keep text readable: left-to-right for horizontal-ish legs,
+        # bottom-to-top for vertical-ish ones (readability bias).
+        text_angle = readable_angle(angle_deg)
 
         if leg.distance is not None:
             self._drawer.add_label(f"{leg.distance:.2f}m", mid_x, mid_y,
@@ -222,18 +230,16 @@ class BasePlan(PlanProps):
         if leg.bearing is None:
             return
 
+        # Degrees and minutes as a single MText entity (professional
+        # convention), centered on the leg with the two parts spread apart
+        # so the label spans a fixed fraction of the leg.
         degrees_label = f"{format_number(leg.bearing.degrees, 'hundredth')}°"
         minutes_label = f"{format_number(leg.bearing.minutes, 'tenth')}'"
-
-        # Bearings read along the line direction, so swap ends when the
-        # line runs right-to-left.
-        if line_direction(angle_deg) == "left → right":
-            degrees_pos, minutes_pos = (first_x, first_y), (last_x, last_y)
-        else:
-            degrees_pos, minutes_pos = (last_x, last_y), (first_x, first_y)
-
-        self._drawer.add_label(degrees_label, *degrees_pos, angle=text_angle, height=self.label_size)
-        self._drawer.add_label(minutes_label, *minutes_pos, angle=text_angle, height=self.label_size)
+        self._drawer.add_split_mtext_label(
+            degrees_label, minutes_label, bearing_x, bearing_y,
+            angle=text_angle, height=self.label_size,
+            span=math.hypot(dx, dy) * 0.6,
+        )
 
     # ------------------------------------------------------------------
     # North arrow
@@ -264,7 +270,7 @@ class BasePlan(PlanProps):
 
         # northing label, raised above the footer boxes when present
         northing_label_y = frame_bottom
-        if self.footers:
+        if self._effective_footers():
             northing_label_y += (frame_top - frame_bottom) * FOOTER_HEIGHT_PERCENT
 
         self._drawer.add_north_arrow_label(

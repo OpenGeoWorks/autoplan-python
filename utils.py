@@ -35,6 +35,29 @@ def line_direction(angle: float) -> str:
     return "right → left"
 
 
+# Label rotations at or past this angle flip by 180 degrees so they stay
+# readable. 110 (not 90) is the drafting convention (e.g. Civil3D's
+# readability bias): near-vertical lines on either side of 90 degrees all
+# read bottom-to-top instead of flipping direction exactly at vertical.
+READABILITY_BIAS = 110.0
+
+
+def readable_angle(angle: float, bias: float = READABILITY_BIAS) -> float:
+    """Return ``angle`` or its reciprocal so label text reads 'uphill'.
+
+    The result lies in [bias - 180, bias): left-to-right for horizontal-ish
+    lines and bottom-to-top for vertical-ish ones, with the flip boundary
+    ``bias - 90`` degrees past vertical so lines that straddle 90 degrees
+    do not read in opposite directions.
+    """
+    angle %= 360.0
+    if bias <= angle < bias + 180.0:
+        angle -= 180.0
+    elif angle >= bias + 180.0:
+        angle -= 360.0
+    return angle
+
+
 def format_number(num, mode: str = "tenth") -> str:
     """Zero-pad a number to 2 ('tenth') or 3 ('hundredth') digits."""
     if mode == "tenth":

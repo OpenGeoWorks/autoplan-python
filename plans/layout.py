@@ -39,7 +39,7 @@ from models.plan import (
     PlanType,
 )
 from plans.base import BasePlan
-from utils import polygon_orientation
+from utils import polygon_orientation, readable_angle
 
 logger = logging.getLogger(__name__)
 
@@ -436,9 +436,7 @@ class LayoutPlan(BasePlan):
             if road.name:
                 mid = centerline.interpolate(0.5, normalized=True)
                 (x1, y1), (x2, y2) = points[0], points[-1]
-                text_angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
-                if text_angle > 90 or text_angle < -90:
-                    text_angle += 180
+                text_angle = readable_angle(math.degrees(math.atan2(y2 - y1, x2 - x1)))
                 height = min(self.label_size, road.width * 0.4)
                 self._drawer.add_label(road.name, mid.x, mid.y,
                                        angle=text_angle, height=height)

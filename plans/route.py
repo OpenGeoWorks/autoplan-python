@@ -34,6 +34,7 @@ from shapely.geometry import LineString
 from dxf_manager import SurveyDXFManager
 from models.plan import PlanType
 from plans.base import BasePlan
+from utils import readable_angle
 
 logger = logging.getLogger(__name__)
 
@@ -348,11 +349,13 @@ class RoutePlan(BasePlan):
 
             if self.route_parameters.show_chainage_labels and i % stride == 0:
                 # Label along the outward normal, anchored past the tick end.
-                label_angle = math.degrees(math.atan2(ny, nx))
-                alignment = TextEntityAlignment.MIDDLE_LEFT
-                if label_angle > 90 or label_angle < -90:
-                    label_angle += 180
-                    alignment = TextEntityAlignment.MIDDLE_RIGHT
+                # When the readable angle is the reciprocal of the normal,
+                # anchor by the other end so the text still extends outward.
+                raw_angle = math.degrees(math.atan2(ny, nx))
+                label_angle = readable_angle(raw_angle)
+                flipped = abs((label_angle - raw_angle) % 360.0) > 90.0
+                alignment = (TextEntityAlignment.MIDDLE_RIGHT if flipped
+                             else TextEntityAlignment.MIDDLE_LEFT)
                 self._drawer.add_text(
                     self.elevations[i].chainage if i < len(self.elevations) else "",
                     x + nx * self._plan_label_offset,

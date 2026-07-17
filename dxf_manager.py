@@ -231,6 +231,42 @@ class SurveyDXFManager:
             },
         ).set_placement((x, y), align=alignment)
 
+    def add_mtext_label(self, text: str, x: float, y: float, angle: float = 0.0,
+                        height: float = 1.0, layer: str = "LABELS"):
+        """Add a single-line MText label centered at (x, y)."""
+        x, y = x * self.scale, y * self.scale
+        height = height * self.scale
+
+        mtext = self.msp.add_mtext(text, dxfattribs={
+            "layer": layer,
+            "style": "SURVEY_TEXT",
+            "char_height": height,
+        })
+        mtext.set_location(
+            (x, y),
+            rotation=angle,
+            attachment_point=ezdxf.enums.MTextEntityAlignment.MIDDLE_CENTER,
+        )
+        return mtext
+
+    def add_split_mtext_label(self, left: str, right: str, x: float, y: float,
+                              angle: float = 0.0, height: float = 1.0, span: float = 0.0,
+                              layer: str = "LABELS"):
+        """Single MText label whose ``left`` and ``right`` parts are padded
+        apart with spaces so the whole label spans roughly ``span`` model
+        units, centered at (x, y)."""
+        font_file = "txt"
+        if "SURVEY_TEXT" in self.doc.styles:
+            font_file = self.doc.styles.get("SURVEY_TEXT").dxf.font or "txt"
+        font = self._measurement_font(font_file, height * self.scale)
+
+        text_width = font.text_width(left + right)
+        space_width = max(font.text_width("| |") - font.text_width("||"), 1e-9)
+        spaces = max(1, round((span * self.scale - text_width) / space_width))
+
+        return self.add_mtext_label(f"{left}{' ' * spaces}{right}", x, y,
+                                    angle=angle, height=height, layer=layer)
+
     def add_text(self, text: str, x: float, y: float, height: float = 1.0,
                  rotation: float = 0.0, alignment=TextEntityAlignment.TOP_LEFT):
         """Add single-line text on the TEXT layer."""
@@ -450,18 +486,30 @@ class SurveyDXFManager:
     # ------------------------------------------------------------------
     # Frames & footers
     # ------------------------------------------------------------------
-    def draw_footer_box(self, text: str, min_x, min_y, max_x, max_y, font_size: float = 1.0):
+    def draw_footer_box(self, text: str, min_x, min_y, max_x, max_y,
+                        font_size: float = 1.0, top_inset: float = 0.0):
         """Draw a footer rectangle with MText content inside.
 
         The text height is clamped so the estimated number of wrapped lines
         always fits inside the box instead of overflowing across the frame.
+        ``top_inset`` reserves space below the box's top edge (e.g. for the
+        plan number) before the footer text starts.
         """
         font_size = font_size * self.scale
+        top_inset = top_inset * self.scale
         min_x, min_y = min_x * self.scale, min_y * self.scale
         max_x, max_y = max_x * self.scale, max_y * self.scale
 
         box_width = max_x - min_x
         box_height = max_y - min_y
+
+        self.msp.add_lwpolyline(
+            [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)],
+            close=True, dxfattribs={"layer": "FOOTER"},
+        )
+
+        if not text.strip():
+            return
 
         # Estimate wrapped line count from the plain text and shrink the
         # font until it fits (line spacing ~1.67x char height in MText).
@@ -472,15 +520,10 @@ class SurveyDXFManager:
             capacity = max((box_width * 0.9) / (0.55 * height), 1.0)
             lines = sum(max(1, math.ceil(len(seg) / capacity)) for seg in plain)
             needed = lines * height * 1.67
-            allowed = box_height * 0.85
+            allowed = max(box_height * 0.85 - top_inset, box_height * 0.1)
             if needed <= allowed:
                 break
             height *= allowed / needed
-
-        self.msp.add_lwpolyline(
-            [(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)],
-            close=True, dxfattribs={"layer": "FOOTER"},
-        )
 
         footer_mtext = self.msp.add_mtext(
             text=text,
@@ -490,7 +533,9 @@ class SurveyDXFManager:
         footer_mtext.dxf.width = box_width * 0.9
         footer_mtext.dxf.char_height = height
         # top-left corner with some padding
-        footer_mtext.set_location((min_x + (0.05 * box_width), max_y - (0.1 * box_height)))
+        footer_mtext.set_location(
+            (min_x + (0.05 * box_width), max_y - (0.1 * box_height) - top_inset)
+        )
 
     def draw_frame(self, min_x, min_y, max_x, max_y):
         """Draw a rectangular frame given min and max coordinates."""
