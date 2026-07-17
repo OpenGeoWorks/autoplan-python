@@ -10,10 +10,12 @@ import math
 from typing import ClassVar, List, Optional, Tuple
 
 import numpy as np
+import shapely
 from contourpy import LineType, contour_generator
 from scipy.interpolate import LinearNDInterpolator, griddata
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import Delaunay
+from shapely.geometry import MultiPoint, Polygon
 
 from dxf_manager import SurveyDXFManager
 from models.plan import CoordinateProps, PlanType
@@ -95,8 +97,6 @@ class TopographicPlan(BasePlan):
     def generate_tin_contours(self, smoothing: float = 1.0):
         """Generate contours from a Delaunay triangulation of the points."""
         tri = Delaunay(np.column_stack([self._x, self._y]))
-        self._add_tin_mesh(tri)
-
         interpolator = LinearNDInterpolator(tri, self._z)
         grid_x, grid_y, grid_z = self._create_interpolation_grid(interpolator)
 
@@ -121,21 +121,29 @@ class TopographicPlan(BasePlan):
         if smoothing > 0:
             grid_z = gaussian_filter(grid_z, sigma=smoothing)
 
-        self._add_grid_mesh(grid_x, grid_y, grid_z)
         self._generate_contours(grid_x, grid_y, grid_z)
 
-    def _add_tin_mesh(self, tri: Delaunay):
+    # ------------------------------------------------------------------
+    # Mesh overlays (drawn on demand, independent of the contour method)
+    # ------------------------------------------------------------------
+    def draw_tin_mesh(self):
+        """Draw the Delaunay triangulation of the survey points."""
+        tri = Delaunay(np.column_stack([self._x, self._y]))
         for simplex in tri.simplices:
             triangle = [tuple(self._points[idx]) for idx in simplex]
             triangle.append(triangle[0])  # close the triangle
             self._drawer.add_tin_mesh(triangle)
 
-    def _add_grid_mesh(self, grid_x, grid_y, grid_z, step: int = 5, elevation: Optional[float] = None):
-        """Add a rectangular reference grid with easting/northing labels."""
+    def draw_reference_grid(self, grid_size: int = 100, step: int = 5):
+        """Draw a rectangular coordinate grid with easting/northing labels,
+        spanning the extent of the survey points at their mean elevation."""
+        xi = np.linspace(self._x.min(), self._x.max(), grid_size)
+        yi = np.linspace(self._y.min(), self._y.max(), grid_size)
+        grid_x, grid_y = np.meshgrid(xi, yi)
+        z_grid = float(np.mean(self._z))
+
         x_min, x_max = grid_x.min(), grid_x.max()
         y_min, y_max = grid_y.min(), grid_y.max()
-
-        z_grid = float(np.nanmean(grid_z)) if elevation is None else elevation
 
         # Horizontal lines (constant northing) with labels at both edges
         for i in range(0, grid_x.shape[0], step):
@@ -184,10 +192,35 @@ class TopographicPlan(BasePlan):
 
         return grid_x, grid_y, grid_z
 
+    def _clip_polygon(self) -> Optional[Polygon]:
+        """Region the contours are confined to: the survey boundary polygon
+        when one is supplied, otherwise the convex hull of the spot heights
+        (the limit of survey). Returns ``None`` only when neither can form a
+        polygon (fewer than three points)."""
+        if self.topographic_boundary and self.topographic_boundary.coordinates:
+            pts = [(c.easting, c.northing) for c in self.topographic_boundary.coordinates]
+            if len(pts) >= 3:
+                poly = Polygon(pts)
+                # Repair self-intersections/duplicate closing points.
+                return poly if poly.is_valid else poly.buffer(0)
+
+        hull = MultiPoint(list(zip(self._x, self._y))).convex_hull
+        return hull if isinstance(hull, Polygon) else None
+
     def _generate_contours(self, grid_x, grid_y, grid_z):
         """Extract contour polylines from gridded data and add them to the DXF."""
         interval = self.topographic_setting.contour_interval
         major = self.topographic_setting.major_contour
+
+        # Confine contours to the survey extent (boundary, else point hull) so
+        # they stop at the surveyed outline instead of the data's rectangular
+        # bounding box. Grid cells whose centre falls outside are masked; for
+        # the TIN path this also discards the nearest-neighbour corner fill.
+        z = np.ma.masked_invalid(grid_z)
+        clip = self._clip_polygon()
+        if clip is not None and not clip.is_empty:
+            inside = shapely.contains_xy(clip, grid_x, grid_y)
+            z = np.ma.masked_where(~inside, z)
 
         z_min, z_max = np.nanmin(grid_z), np.nanmax(grid_z)
         levels = np.arange(
@@ -197,7 +230,7 @@ class TopographicPlan(BasePlan):
         )
 
         generator = contour_generator(
-            x=grid_x, y=grid_y, z=np.ma.masked_invalid(grid_z),
+            x=grid_x, y=grid_y, z=z,
             line_type=LineType.Separate,
         )
 
@@ -241,16 +274,24 @@ class TopographicPlan(BasePlan):
         if settings.grid:
             self.generate_grid_contours(100, 1.5)
 
+        # TIN mesh and coordinate grid are optional sheet overlays, switchable
+        # independently of the contour method. `show_mesh` is the legacy single
+        # toggle (tied to the active method) and is honoured for old payloads.
+        show_tin_mesh = settings.show_tin_mesh or (settings.show_mesh and settings.tin)
+        show_grid = settings.show_grid or (settings.show_mesh and settings.grid)
+
+        if show_tin_mesh:
+            self.draw_tin_mesh()
+        if show_grid:
+            self.draw_reference_grid()
+
         self._drawer.toggle_layer("SPOT_HEIGHTS", settings.show_spot_heights)
         self._drawer.toggle_layer("CONTOUR_MAJOR", settings.show_contours)
         self._drawer.toggle_layer("CONTOUR_MINOR", settings.show_contours)
         self._drawer.toggle_layer("CONTOUR_LABELS", settings.show_contours_labels)
         self._drawer.toggle_layer("BOUNDARY", settings.show_boundary)
-
-        if settings.tin:
-            self._drawer.toggle_layer("TIN_MESH", settings.show_mesh)
-        if settings.grid:
-            self._drawer.toggle_layer("GRID_MESH", settings.show_mesh)
+        self._drawer.toggle_layer("TIN_MESH", bool(show_tin_mesh))
+        self._drawer.toggle_layer("GRID_MESH", bool(show_grid))
 
     def draw(self):
         self.draw_beacons()

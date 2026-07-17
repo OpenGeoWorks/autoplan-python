@@ -99,9 +99,11 @@ class TopographicSettingProps(BaseModel):
     contour_label_scale: float = 1.0
     show_boundary: bool = True
     boundary_label_scale: float = 1.0
-    tin: Optional[bool] = False
-    grid: Optional[bool] = False
-    show_mesh: Optional[bool] = False
+    tin: Optional[bool] = False  # generate contours from a TIN (Delaunay)
+    grid: Optional[bool] = False  # generate contours from a regular grid
+    show_mesh: Optional[bool] = False  # legacy single mesh toggle (deprecated)
+    show_tin_mesh: Optional[bool] = False  # draw the TIN triangulation overlay
+    show_grid: Optional[bool] = False  # draw the coordinate reference grid
 
 
 class TopographicBoundaryProps(BaseModel):

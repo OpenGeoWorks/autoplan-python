@@ -94,7 +94,8 @@ def topographic_payload():
             "grid": True,
             "contour_interval": 0.5,
             "major_contour": 2.0,
-            "show_mesh": True,
+            "show_tin_mesh": True,
+            "show_grid": True,
         },
     }
 
