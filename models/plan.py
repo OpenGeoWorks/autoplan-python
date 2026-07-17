@@ -43,6 +43,15 @@ class PageOrientation(str, Enum):
     LANDSCAPE = "landscape"
 
 
+class LayoutMode(str, Enum):
+    """Which layout design a layout plan draws: the auto-generated
+    subdivision (from ``layout_parameters``) or the manually entered one
+    (``coordinates``/``plots``/``roads``). Both datasets may coexist in the
+    payload; this field only selects which one is used."""
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
 # ---------- Supporting models ----------
 class CoordinateProps(BaseModel):
     id: str = ""
@@ -224,6 +233,8 @@ class PlanProps(BaseModel):
     topographic_boundary: Optional[TopographicBoundaryProps] = None
     layout_boundary: Optional[LayoutBoundaryProps] = None
     layout_parameters: LayoutParameters = Field(default_factory=LayoutParameters)
+    # None keeps the legacy behaviour: manual data wins when present.
+    layout_mode: Optional[LayoutMode] = None
     plots: Optional[List[LayoutPlotProps]] = None
     roads: Optional[List[LayoutRoadProps]] = None
     longitudinal_profile_parameters: Optional[LongitudinalProfileParameters] = None

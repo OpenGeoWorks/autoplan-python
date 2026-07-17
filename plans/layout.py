@@ -14,6 +14,11 @@ Supports the two ways layout jobs arrive in practice:
    with open space and facility reservations. Generation fills in the same
    ``coordinates``/``plots``/``roads`` structures that draw mode consumes.
 
+The payload's ``layout_mode`` field ("manual"/"auto") selects the mode
+explicitly — both datasets may coexist without one shadowing the other.
+Payloads without it fall back to the legacy rule: draw mode when ``plots``
+are present, generate mode otherwise.
+
 Either way, the exported bundle includes a setting-out CSV with the
 coordinates of every plot corner beacon for field staking. Perimeter
 bearings/distances are computed upstream by the AutoPlan API and arrive in
@@ -34,6 +39,7 @@ from shapely.ops import unary_union
 from dxf_manager import SurveyDXFManager
 from models.plan import (
     CoordinateProps,
+    LayoutMode,
     LayoutPlotProps,
     LayoutRoadProps,
     PlanType,
@@ -573,11 +579,23 @@ class LayoutPlan(BasePlan):
     # ------------------------------------------------------------------
     # Entry points
     # ------------------------------------------------------------------
+    def _effective_layout_mode(self) -> LayoutMode:
+        """``layout_mode`` decides which design is drawn; legacy payloads
+        without it keep the old behaviour (manual data wins when present)."""
+        if self.layout_mode is not None:
+            return self.layout_mode
+        return LayoutMode.MANUAL if self.plots else LayoutMode.AUTO
+
     def draw(self):
         self._ensure_boundary_computations()
 
-        if not self.plots:
+        if self._effective_layout_mode() == LayoutMode.AUTO:
+            # Replaces plots/roads/coordinates in memory only — the caller's
+            # stored manual layout data is never modified.
             self._generate_layout()
+        elif not self.plots:
+            raise ValueError("Layout is in manual mode but has no plots; "
+                             "add plots or switch to automated layout.")
 
         self.draw_boundary()
         self.draw_roads()
