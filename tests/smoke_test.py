@@ -120,10 +120,8 @@ def route_payload():
         "longitudinal_profile_parameters": {
             "horizontal_scale": 1.0,
             "vertical_scale": 5.0,
-            "profile_origin": [0.0, 0.0],
             "station_interval": 20.0,
             "elevation_interval": 1.0,
-            "starting_chainage": 0.0,
         },
         "route_parameters": {
             "right_of_way_width": 30.0,

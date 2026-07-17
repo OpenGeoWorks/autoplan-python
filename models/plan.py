@@ -184,10 +184,8 @@ class LayoutParameters(BaseModel):
 class LongitudinalProfileParameters(BaseModel):
     horizontal_scale: float = 1.0  # drawing units per metre of chainage
     vertical_scale: float = 1.0  # drawing units per metre of elevation
-    profile_origin: List[float] = [0.0, 0.0]
     station_interval: float = 10.0  # metres
     elevation_interval: float = 1.0
-    starting_chainage: float = 0.0
 
 
 class RouteParameters(BaseModel):
@@ -283,8 +281,10 @@ class PlanProps(BaseModel):
         max_elev = max(e.elevation for e in self.elevations)
         chainage_length = params.station_interval * (len(self.elevations) - 1)
 
-        min_x = params.profile_origin[0]
-        min_y = params.profile_origin[1]
+        # The profile is anchored at the drawing origin; the frame fits to
+        # content, so the absolute position carries no meaning.
+        min_x = 0.0
+        min_y = 0.0
         max_x = min_x + chainage_length * params.horizontal_scale
         max_y = min_y + (max_elev - min_elev) * params.vertical_scale
 

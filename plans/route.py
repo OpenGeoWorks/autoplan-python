@@ -193,11 +193,11 @@ class RoutePlan(BasePlan):
         return elev_start, elev_end, interval, min_elev
 
     def _elevation_to_y(self, elevation: float) -> float:
-        """Y drawing coordinate of an elevation; the profile origin maps to
-        the minimum ground elevation."""
+        """Y drawing coordinate of an elevation; the minimum ground elevation
+        maps to the drawing origin."""
         params = self.longitudinal_profile_parameters
         min_elev = min(e.elevation for e in self.elevations)
-        return params.profile_origin[1] + (elevation - min_elev) * params.vertical_scale
+        return (elevation - min_elev) * params.vertical_scale
 
     # ------------------------------------------------------------------
     # Plan view (horizontal alignment)
